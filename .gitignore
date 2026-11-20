@@ -1,0 +1,13 @@
+factor-lab.exe
+factor-lab
+data/
+dist/
+node_modules/
+*.log
+# 运行时产物
+be.json
+ev.json
+fs.json
+data/*.seeded
+data/*.bak
+shots/

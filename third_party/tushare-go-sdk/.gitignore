@@ -1,0 +1,13 @@
+# 构建产物与本地文件
+/bars.csv
+/bin/
+*.exe
+*.test
+*.out
+cover.out
+
+# 本地 token 与 IDE
+.env
+.idea/
+.vscode/
+.workbuddy/

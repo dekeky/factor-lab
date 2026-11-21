@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"factor-lab/internal/paper/account"
@@ -29,10 +30,15 @@ func Open(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	if filepath.IsAbs(path) || (len(path) > 0 && path[0] != ':') {
+		dsn = "file:" + filepath.ToSlash(path) + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		db.Close()
 		return nil, err
@@ -57,8 +63,34 @@ func (s *Store) Close() error {
 
 func (s *Store) DB() *sql.DB { return s.db }
 
+type queryer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	Prepare(query string) (*sql.Stmt, error)
+}
+
+func (s *Store) q(tx *sql.Tx) queryer {
+	if tx != nil {
+		return tx
+	}
+	return s.db
+}
+
+func IsConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
+}
+
 func (s *Store) InsertAccount(acc account.Account) (int, error) {
-	res, err := s.db.Exec(`INSERT INTO account (
+	return s.InsertAccountTx(nil, acc)
+}
+
+func (s *Store) InsertAccountTx(tx *sql.Tx, acc account.Account) (int, error) {
+	res, err := s.q(tx).Exec(`INSERT INTO account (
 		name, factor_id, factor_name, combo_id, combo_name, expr,
 		top_n, rebalance_threshold, capital, cost, slippage_bps, start, created_at, updated_at
 	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -116,6 +148,10 @@ func (s *Store) ListAccounts() ([]account.Account, error) {
 }
 
 func (s *Store) InsertSnapshot(snap ledger.Snapshot) error {
+	return s.InsertSnapshotTx(nil, snap)
+}
+
+func (s *Store) InsertSnapshotTx(tx *sql.Tx, snap ledger.Snapshot) error {
 	hold, err := json.Marshal(snap.Holdings)
 	if err != nil {
 		return err
@@ -123,7 +159,7 @@ func (s *Store) InsertSnapshot(snap ledger.Snapshot) error {
 	if hold == nil {
 		hold = []byte("[]")
 	}
-	_, err = s.db.Exec(`INSERT INTO snapshot (account_id, date, cash, nav, ret, holdings) VALUES (?,?,?,?,?,?)`,
+	_, err = s.q(tx).Exec(`INSERT INTO snapshot (account_id, date, cash, nav, ret, holdings) VALUES (?,?,?,?,?,?)`,
 		snap.AccountID, snap.Date, snap.Cash, snap.NAV, snap.Ret, string(hold))
 	return err
 }
@@ -168,6 +204,10 @@ func (s *Store) ListSnapshots(accountID int) ([]ledger.Snapshot, error) {
 }
 
 func (s *Store) InsertPlan(p matching.Plan) (int64, error) {
+	return s.InsertPlanTx(nil, p)
+}
+
+func (s *Store) InsertPlanTx(tx *sql.Tx, p matching.Plan) (int64, error) {
 	raw, err := json.Marshal(p.Intents)
 	if err != nil {
 		return 0, err
@@ -179,7 +219,7 @@ func (s *Store) InsertPlan(p matching.Plan) (int64, error) {
 	if status == "" {
 		status = "pending"
 	}
-	res, err := s.db.Exec(`INSERT INTO plan (account_id, signal_date, exec_at, intents, status) VALUES (?,?,?,?,?)`,
+	res, err := s.q(tx).Exec(`INSERT INTO plan (account_id, signal_date, exec_at, intents, status) VALUES (?,?,?,?,?)`,
 		p.AccountID, p.SignalDate, p.ExecAt, string(raw), status)
 	if err != nil {
 		return 0, err
@@ -223,11 +263,15 @@ func (s *Store) ListPlans(accountID int) ([]matching.Plan, error) {
 }
 
 func (s *Store) MarkPlanDone(id int64, intents []matching.Intent) (bool, error) {
+	return s.MarkPlanDoneTx(nil, id, intents)
+}
+
+func (s *Store) MarkPlanDoneTx(tx *sql.Tx, id int64, intents []matching.Intent) (bool, error) {
 	raw, err := json.Marshal(intents)
 	if err != nil {
 		return false, err
 	}
-	res, err := s.db.Exec(`UPDATE plan SET status='done', intents=? WHERE id=? AND status='pending'`, string(raw), id)
+	res, err := s.q(tx).Exec(`UPDATE plan SET status='done', intents=? WHERE id=? AND status='pending'`, string(raw), id)
 	if err != nil {
 		return false, err
 	}
@@ -236,27 +280,61 @@ func (s *Store) MarkPlanDone(id int64, intents []matching.Intent) (bool, error) 
 }
 
 func (s *Store) InsertFills(fills []ledger.Fill) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
+	return s.InsertFillsTx(nil, fills)
+}
+
+func (s *Store) InsertFillsTx(tx *sql.Tx, fills []ledger.Fill) error {
+	if len(fills) == 0 {
+		return nil
 	}
-	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT INTO fill (account_id, plan_id, date, code, side, shares, price, amount, fee, slippage, status)
+	run := func(q queryer) error {
+		stmt, err := q.Prepare(`INSERT INTO fill (account_id, plan_id, date, code, side, shares, price, amount, fee, slippage, status)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for _, f := range fills {
-		var planID any
-		if f.PlanID != 0 {
-			planID = f.PlanID
-		}
-		if _, err := stmt.Exec(f.AccountID, planID, f.Date, f.Code, f.Side, f.Shares, f.Price, f.Amount, f.Fee, f.Slippage, f.Status); err != nil {
+		if err != nil {
 			return err
 		}
+		defer stmt.Close()
+		for _, f := range fills {
+			var planID any
+			if f.PlanID != 0 {
+				planID = f.PlanID
+			}
+			if _, err := stmt.Exec(f.AccountID, planID, f.Date, f.Code, f.Side, f.Shares, f.Price, f.Amount, f.Fee, f.Slippage, f.Status); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	return tx.Commit()
+	if tx != nil {
+		return run(tx)
+	}
+	own, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer own.Rollback()
+	if err := run(own); err != nil {
+		return err
+	}
+	return own.Commit()
+}
+
+func (s *Store) ListFills(accountID int) ([]ledger.Fill, error) {
+	rows, err := s.db.Query(`SELECT id, account_id, COALESCE(plan_id, 0), date, code, side, shares, price, amount, fee, slippage, status
+		FROM fill WHERE account_id=? ORDER BY id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ledger.Fill
+	for rows.Next() {
+		var f ledger.Fill
+		if err := rows.Scan(&f.ID, &f.AccountID, &f.PlanID, &f.Date, &f.Code, &f.Side, &f.Shares, &f.Price, &f.Amount, &f.Fee, &f.Slippage, &f.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) DeleteAccount(id int) error {

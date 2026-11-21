@@ -1,0 +1,272 @@
+package store
+
+import (
+	"database/sql"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"factor-lab/internal/paper/account"
+	"factor-lab/internal/paper/ledger"
+	"factor-lab/internal/paper/matching"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed schema.sql
+var schemaSQL string
+
+type Store struct {
+	db *sql.DB
+}
+
+func Open(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(schemaSQL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate paper schema: %w", err)
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+func (s *Store) DB() *sql.DB { return s.db }
+
+func (s *Store) InsertAccount(acc account.Account) (int, error) {
+	res, err := s.db.Exec(`INSERT INTO account (
+		name, factor_id, factor_name, combo_id, combo_name, expr,
+		top_n, rebalance_threshold, capital, cost, slippage_bps, start, created_at, updated_at
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		acc.Name, acc.FactorID, acc.FactorName, acc.ComboID, acc.ComboName, acc.Expr,
+		acc.Config.TopN, acc.Config.RebalanceThreshold, acc.Config.Capital, acc.Config.Cost,
+		acc.Config.SlippageBps, acc.Config.Start, fmtTime(acc.CreatedAt), fmtTime(acc.UpdatedAt),
+	)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	return int(id), err
+}
+
+func (s *Store) GetAccount(id int) (account.Account, error) {
+	var acc account.Account
+	var created, updated string
+	err := s.db.QueryRow(`SELECT id, name, factor_id, factor_name, combo_id, combo_name, expr,
+		top_n, rebalance_threshold, capital, cost, slippage_bps, start, created_at, updated_at
+		FROM account WHERE id=?`, id).Scan(
+		&acc.ID, &acc.Name, &acc.FactorID, &acc.FactorName, &acc.ComboID, &acc.ComboName, &acc.Expr,
+		&acc.Config.TopN, &acc.Config.RebalanceThreshold, &acc.Config.Capital, &acc.Config.Cost,
+		&acc.Config.SlippageBps, &acc.Config.Start, &created, &updated,
+	)
+	if err != nil {
+		return account.Account{}, err
+	}
+	acc.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	acc.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return acc, nil
+}
+
+func (s *Store) ListAccounts() ([]account.Account, error) {
+	rows, err := s.db.Query(`SELECT id, name, factor_id, factor_name, combo_id, combo_name, expr,
+		top_n, rebalance_threshold, capital, cost, slippage_bps, start, created_at, updated_at
+		FROM account ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []account.Account
+	for rows.Next() {
+		var acc account.Account
+		var created, updated string
+		if err := rows.Scan(&acc.ID, &acc.Name, &acc.FactorID, &acc.FactorName, &acc.ComboID, &acc.ComboName, &acc.Expr,
+			&acc.Config.TopN, &acc.Config.RebalanceThreshold, &acc.Config.Capital, &acc.Config.Cost,
+			&acc.Config.SlippageBps, &acc.Config.Start, &created, &updated); err != nil {
+			return nil, err
+		}
+		acc.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		acc.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+		out = append(out, acc)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) InsertSnapshot(snap ledger.Snapshot) error {
+	hold, err := json.Marshal(snap.Holdings)
+	if err != nil {
+		return err
+	}
+	if hold == nil {
+		hold = []byte("[]")
+	}
+	_, err = s.db.Exec(`INSERT INTO snapshot (account_id, date, cash, nav, ret, holdings) VALUES (?,?,?,?,?,?)`,
+		snap.AccountID, snap.Date, snap.Cash, snap.NAV, snap.Ret, string(hold))
+	return err
+}
+
+func (s *Store) LatestBook(accountID int) (ledger.Book, error) {
+	var date, holdings string
+	var cash, nav, ret float64
+	err := s.db.QueryRow(`SELECT date, cash, nav, ret, holdings FROM snapshot WHERE account_id=? ORDER BY date DESC LIMIT 1`, accountID).
+		Scan(&date, &cash, &nav, &ret, &holdings)
+	if err == sql.ErrNoRows {
+		return ledger.Book{AccountID: accountID}, nil
+	}
+	if err != nil {
+		return ledger.Book{}, err
+	}
+	var pos []ledger.Position
+	if holdings != "" {
+		_ = json.Unmarshal([]byte(holdings), &pos)
+	}
+	return ledger.Book{AccountID: accountID, Cash: cash, Positions: pos, LastSettled: date}, nil
+}
+
+func (s *Store) ListSnapshots(accountID int) ([]ledger.Snapshot, error) {
+	rows, err := s.db.Query(`SELECT account_id, date, cash, nav, ret, holdings FROM snapshot WHERE account_id=? ORDER BY date`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ledger.Snapshot
+	for rows.Next() {
+		var snap ledger.Snapshot
+		var holdings string
+		if err := rows.Scan(&snap.AccountID, &snap.Date, &snap.Cash, &snap.NAV, &snap.Ret, &holdings); err != nil {
+			return nil, err
+		}
+		if holdings != "" {
+			_ = json.Unmarshal([]byte(holdings), &snap.Holdings)
+		}
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) InsertPlan(p matching.Plan) (int64, error) {
+	raw, err := json.Marshal(p.Intents)
+	if err != nil {
+		return 0, err
+	}
+	if raw == nil {
+		raw = []byte("[]")
+	}
+	status := p.Status
+	if status == "" {
+		status = "pending"
+	}
+	res, err := s.db.Exec(`INSERT INTO plan (account_id, signal_date, exec_at, intents, status) VALUES (?,?,?,?,?)`,
+		p.AccountID, p.SignalDate, p.ExecAt, string(raw), status)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) GetPlan(id int64) (matching.Plan, error) {
+	var p matching.Plan
+	var raw string
+	err := s.db.QueryRow(`SELECT id, account_id, signal_date, exec_at, intents, status FROM plan WHERE id=?`, id).
+		Scan(&p.ID, &p.AccountID, &p.SignalDate, &p.ExecAt, &raw, &p.Status)
+	if err != nil {
+		return matching.Plan{}, err
+	}
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &p.Intents)
+	}
+	return p, nil
+}
+
+func (s *Store) ListPlans(accountID int) ([]matching.Plan, error) {
+	rows, err := s.db.Query(`SELECT id, account_id, signal_date, exec_at, intents, status FROM plan WHERE account_id=? ORDER BY exec_at`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []matching.Plan
+	for rows.Next() {
+		var p matching.Plan
+		var raw string
+		if err := rows.Scan(&p.ID, &p.AccountID, &p.SignalDate, &p.ExecAt, &raw, &p.Status); err != nil {
+			return nil, err
+		}
+		if raw != "" {
+			_ = json.Unmarshal([]byte(raw), &p.Intents)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkPlanDone(id int64, intents []matching.Intent) (bool, error) {
+	raw, err := json.Marshal(intents)
+	if err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`UPDATE plan SET status='done', intents=? WHERE id=? AND status='pending'`, string(raw), id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) InsertFills(fills []ledger.Fill) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT INTO fill (account_id, plan_id, date, code, side, shares, price, amount, fee, slippage, status)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, f := range fills {
+		var planID any
+		if f.PlanID != 0 {
+			planID = f.PlanID
+		}
+		if _, err := stmt.Exec(f.AccountID, planID, f.Date, f.Code, f.Side, f.Shares, f.Price, f.Amount, f.Fee, f.Slippage, f.Status); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteAccount(id int) error {
+	_, err := s.db.Exec(`DELETE FROM account WHERE id=?`, id)
+	return err
+}
+
+func fmtTime(t time.Time) string {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}

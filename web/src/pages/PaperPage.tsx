@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import type { Combo, Factor, PaperAccount, PaperDay, PaperPick } from '../types'
+import type { Combo, Factor, Paper, PaperFill, PaperPlan, PaperPick, PaperPosition } from '../types'
 import { PaperNavChart } from '../components/Charts'
 import { DatePicker } from '../components/DatePicker'
 import { Modal } from '../components/Modal'
@@ -11,6 +11,12 @@ import { Busy, Empty, PageHead, dt, fmt, pct, signCls } from '../components/Layo
 const STATUS: Record<string, string> = {
   selected: '入选',
   filled: '成交',
+  enter: '新开',
+  exit: '清仓',
+  rebalance: '再平衡',
+  buy: '买入',
+  sell: '卖出',
+  hold: '持有',
   skipped_suspend: '停牌',
   skipped_limit_up: '涨停',
   skipped_limit_down: '跌停',
@@ -29,13 +35,14 @@ function statusTag(s: string) {
   return <span className={`tag ${cls}`}>{STATUS[s] ?? s}</span>
 }
 
-function paperSourceName(a: PaperAccount) {
+function paperSourceName(p: Paper) {
+  const a = p.account
   return a.combo_name || a.factor_name || '—'
 }
 
-function paperTitle(a: PaperAccount) {
-  const src = paperSourceName(a)
-  return src !== '—' ? src : a.name || '模拟盘'
+function paperTitle(p: Paper) {
+  const src = paperSourceName(p)
+  return src !== '—' ? src : p.account.name || '模拟盘'
 }
 
 function lots(v: number | undefined | null) {
@@ -65,20 +72,42 @@ function galleryTime(iso?: string) {
   return `${Math.floor(hours / 24)} 天前`
 }
 
-function paperStatus(a: PaperAccount) {
-  if (a.pending) return '待成交'
-  if ((a.summary?.days ?? 0) > 0) return '运行中'
-  return '未同步'
+function paperStatus(p: Paper) {
+  if ((p.plans ?? []).some((x) => x.status === 'pending')) return '待成交'
+  if ((p.snapshots ?? []).length > 1) return '运行中'
+  return '排队中'
 }
 
-function paperNav(a: PaperAccount) {
-  return a.summary?.nav ?? a.cash
+function paperNav(p: Paper) {
+  const snaps = p.snapshots ?? []
+  return snaps[snaps.length - 1]?.nav ?? p.book.cash
+}
+
+function paperReturn(p: Paper) {
+  const cap = p.account.config.capital
+  if (!cap) return 0
+  return paperNav(p) / cap - 1
+}
+
+function paperMaxDD(p: Paper) {
+  let peak = 0
+  let dd = 0
+  for (const s of p.snapshots ?? []) {
+    if (s.nav > peak) peak = s.nav
+    if (peak > 0) dd = Math.min(dd, s.nav / peak - 1)
+  }
+  return dd
+}
+
+function planByKey(p: Paper, key: string): PaperPlan | undefined {
+  const plans = p.plans ?? []
+  return plans.find((x) => x.signal_date === key) || plans.find((x) => (x.exec_at || '').slice(0, 10) === key)
 }
 
 export function PaperPage({ factors }: { factors: Factor[] }) {
-  const [list, setList] = useState<PaperAccount[]>([])
+  const [list, setList] = useState<Paper[]>([])
   const [listReady, setListReady] = useState(false)
-  const [acc, setAcc] = useState<PaperAccount | null>(null)
+  const [acc, setAcc] = useState<Paper | null>(null)
   const [sel, setSel] = useState<number | null>(null)
   const [dayKey, setDayKey] = useState('')
   const [busy, setBusy] = useState(false)
@@ -93,6 +122,14 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
     return rows
   }
 
+  const pickDayKey = (a: Paper) => {
+    const plans = a.plans ?? []
+    const pending = plans.find((x) => x.status === 'pending')
+    const last = plans[plans.length - 1]
+    const snaps = a.snapshots ?? []
+    return pending?.signal_date || last?.signal_date || snaps[snaps.length - 1]?.date || ''
+  }
+
   const open = async (id: number) => {
     setSel(id)
     setBusy(true)
@@ -100,8 +137,7 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
     try {
       const a = await api.paper(id)
       setAcc(a)
-      const last = a.pending?.date || a.days?.[a.days.length - 1]?.date || ''
-      setDayKey(last)
+      setDayKey(pickDayKey(a))
       await loadList()
     } catch (e) {
       setErr((e as Error).message)
@@ -127,30 +163,17 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
 
   const day = useMemo(() => {
     if (!acc) return null
-    if (acc.pending && dayKey === acc.pending.date) {
-      return {
-        pending: true,
-        date: acc.pending.date,
-        fill_date: acc.pending.fill_date || '',
-        picks: acc.pending.items,
-        skipped: acc.pending.skipped,
-        holdings: acc.positions || [],
-        trades: [] as PaperDay['trades'],
-        nav: acc.summary?.nav ?? acc.cash,
-        cash: acc.cash,
-        ret: 0,
-      }
-    }
-    return (acc.days ?? []).find((d) => d.date === dayKey) ?? null
+    const plan = planByKey(acc, dayKey)
+    if (!plan) return null
+    return dayFromPlan(acc, plan)
   }, [acc, dayKey])
 
   const dayOpts = useMemo(() => {
     if (!acc) return []
-    const days = [...(acc.days ?? [])].reverse().map((d) => ({ value: d.date, label: d.date }))
-    if (acc.pending) {
-      return [{ value: acc.pending.date, label: acc.pending.date + '（待成交）' }, ...days.filter((d) => d.value !== acc.pending?.date)]
-    }
-    return days
+    return [...(acc.plans ?? [])].reverse().map((p) => ({
+      value: p.signal_date,
+      label: p.status === 'pending' ? `${p.signal_date}（待成交 ${p.exec_at}）` : p.signal_date,
+    }))
   }, [acc])
 
   async function onCreate(body: { name: string; factor_id?: number; combo_id?: number; top_n: number; buffer: number; capital: number; cost: number; start: string }) {
@@ -160,8 +183,8 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
       const a = await api.createPaper(body)
       setCreating(false)
       setAcc(a)
-      setSel(a.id)
-      setDayKey(a.pending?.date || a.days?.[a.days.length - 1]?.date || '')
+      setSel(a.account.id)
+      setDayKey(pickDayKey(a))
       await loadList()
     } catch (e) {
       setErr((e as Error).message)
@@ -203,16 +226,17 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
     }
   }
 
-  const navDays = acc?.days ?? []
+  const navDays = acc?.snapshots ?? []
 
-  const openInspect = (signalDate: string) => {
-    if (!signalDate) return
-    setDayKey(signalDate)
+  const openInspect = (date: string) => {
+    if (!date || !acc) return
+    const plan = planByKey(acc, date)
+    setDayKey(plan?.signal_date || date)
     setInspect(true)
   }
 
   const browsing = sel == null
-  const sourceKind = acc?.combo_id ? '组合' : '因子'
+  const sourceKind = acc?.account.combo_id ? '组合' : '因子'
 
   return (
     <>
@@ -220,8 +244,8 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
         title={acc ? paperTitle(acc) : '实盘模拟'}
         desc={
           acc
-            ? `${sourceKind} · Top ${acc.config.top_n} · 阈值 ${acc.config.buffer ?? 0}`
-            : '冻结因子或组合每日打分，选出 Top N。持仓排名跌出 Top N + 调仓阈值才换股；T+1 前复权开盘成交，停牌与涨跌停从股票池剔除。'
+            ? `${sourceKind} · Top ${acc.account.config.top_n} · 阈值 ${acc.account.config.rebalance_threshold ?? 0}`
+            : '用虚拟资金按日选股、调仓，看账户净值怎么变。'
         }
         actions={
           <>
@@ -253,8 +277,8 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
         ) : list.length === 0 ? (
           <div className="paper-empty">
             <div className="paper-empty-icon">▣</div>
-            <h3>把评价过的因子用起来</h3>
-            <p>用虚拟资金按日线打分调仓，查看持仓与净值。选一个因子或组合，按 Top N 逐日记账。</p>
+            <h3>还没有模拟盘</h3>
+            <p>选一个评价过的因子或组合，用虚拟资金按日选股，看净值怎么走。</p>
             <button className="btn primary" onClick={() => setCreating(true)}>
               新建模拟盘
             </button>
@@ -262,7 +286,7 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
         ) : (
           <div className="paper-gallery">
             {list.map((a) => (
-              <PaperAccountCard key={a.id} account={a} onOpen={() => void open(a.id)} onDelete={() => void onDelete(a.id)} />
+              <PaperAccountCard key={a.account.id} account={a} onOpen={() => void open(a.account.id)} onDelete={() => void onDelete(a.account.id)} />
             ))}
             <button type="button" className="paper-tile paper-tile-new" onClick={() => setCreating(true)}>
               <span className="plus">+</span>
@@ -277,27 +301,27 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
           <div className="grid c4 mb12">
             <div className="kpi">
               <div className="lbl">净值</div>
-              <div className="num">{money(acc.summary?.nav)}</div>
-              <div className="foot">本金 {money(acc.config.capital)}</div>
+              <div className="num">{money(paperNav(acc))}</div>
+              <div className="foot">本金 {money(acc.account.config.capital)}</div>
             </div>
             <div className="kpi">
               <div className="lbl">累计盈利</div>
-              <div className={`num ${signCls(acc.summary?.pnl ?? acc.summary?.return)}`}>{money(acc.summary?.pnl)}</div>
+              <div className={`num ${signCls(paperReturn(acc))}`}>{money(paperNav(acc) - acc.account.config.capital)}</div>
               <div className="foot">
-                {pct(acc.summary?.return, 2)} · {acc.summary?.days ?? 0} 个成交日
+                {pct(paperReturn(acc), 2)} · {(acc.plans ?? []).filter((x) => x.status === 'done').length} 个成交日
               </div>
             </div>
             <div className="kpi">
               <div className="lbl">最大回撤</div>
-              <div className="num neg">{pct(acc.summary?.max_dd, 2)}</div>
-              <div className="foot">持仓 {acc.summary?.holdings ?? 0} 只</div>
+              <div className="num neg">{pct(paperMaxDD(acc), 2)}</div>
+              <div className="foot">持仓 {(acc.book.positions ?? []).filter((h) => h.shares > 0).length} 只</div>
             </div>
             <div className="kpi">
               <div className="lbl">现金</div>
-              <div className="num">{money(acc.cash)}</div>
+              <div className="num">{money(acc.book.cash)}</div>
               <div className="foot">
-                单边成本 {(acc.config.cost * 100).toFixed(2)}%
-                <button className="btn xs danger" style={{ marginLeft: 8 }} onClick={() => onDelete(acc.id)}>
+                单边成本 {(acc.account.config.cost * 100).toFixed(2)}%
+                <button className="btn xs danger" style={{ marginLeft: 8 }} onClick={() => onDelete(acc.account.id)}>
                   删除
                 </button>
               </div>
@@ -315,14 +339,14 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
                   </button>
                 </span>
               </h3>
-              <PaperNavChart days={navDays} capital={acc.config.capital} onInspectDay={openInspect} />
+              <PaperNavChart snapshots={navDays} fills={acc.fills} capital={acc.account.config.capital} onInspectDay={openInspect} />
             </div>
           )}
 
           <div className="card">
             <h3>
               每日选股
-              <span className="hint">信号日打分，T+1 前复权开盘成交</span>
+              <span className="hint">信号日收盘打分，下一交易日 09:30 开盘成交</span>
               <span className="right">
                 <Select value={dayKey} onChange={setDayKey} items={dayOpts} minWidth={180} size="sm" />
               </span>
@@ -343,7 +367,7 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
       )}
       {inspect && day && (
         <Modal
-          title={`当日明细 · ${day.fill_date || day.date}`}
+          title={`当日明细 · ${day.exec_at || day.date}`}
           subtitle={`信号日 ${day.date} · 净值 ${money(day.nav)}`}
           width={860}
           onClose={() => setInspect(false)}
@@ -362,34 +386,34 @@ function PaperAccountCard({
   onOpen,
   onDelete,
 }: {
-  account: PaperAccount
+  account: Paper
   onOpen: () => void
   onDelete: () => void
 }) {
   const title = paperTitle(account)
-  const ret = account.summary?.return
-  const synced = account.summary?.synced_at || account.updated_at
+  const ret = paperReturn(account)
+  const synced = account.account.updated_at
   return (
     <div className="paper-tile">
       <button type="button" className="paper-tile-body" onClick={onOpen}>
         <div className="paper-tile-title">{title}</div>
-        <p className="paper-tile-sub">
-          {money(paperNav(account))} · {paperStatus(account)}
-        </p>
+        <div className={`paper-tile-ret ${signCls(ret)}`}>{signedPct(ret, 2)}</div>
         <div className="paper-tile-chart">
-          <PaperSpark days={account.days} capital={account.config.capital} />
+          <PaperSpark snapshots={account.snapshots} capital={account.account.config.capital} />
         </div>
         <div className="paper-tile-meta">
           <div className="paper-tile-meta-left">
             <span>
-              {account.combo_id ? '组合' : '因子'} · Top {account.config.top_n}
+              {money(paperNav(account))} · {paperStatus(account)}
             </span>
             <span className="sep">·</span>
-            <span className={signCls(ret)}>{signedPct(ret, 2)}</span>
+            <span>
+              {account.account.combo_id ? '组合' : '因子'} Top {account.account.config.top_n}
+            </span>
           </div>
           {synced ? (
             <span className="time" title={dt(synced)}>
-              上次同步 {galleryTime(synced)}
+              开户 {galleryTime(synced)}
             </span>
           ) : null}
         </div>
@@ -410,9 +434,9 @@ function PaperAccountCard({
   )
 }
 
-function PaperSpark({ days, capital }: { days?: PaperDay[]; capital: number }) {
-  if (!days || days.length < 2 || !(capital > 0)) return null
-  const values = days.map((d) => (d.nav / capital - 1) * 100)
+function PaperSpark({ snapshots, capital }: { snapshots?: { date: string; nav: number }[]; capital: number }) {
+  if (!snapshots || snapshots.length < 2 || !(capital > 0)) return null
+  const values = snapshots.map((d) => (d.nav / capital - 1) * 100)
   const last = values[values.length - 1] ?? 0
   const min = Math.min(0, ...values)
   const max = Math.max(0, ...values)
@@ -441,14 +465,37 @@ function comboUsable(c: Combo) {
 type DayView = {
   pending?: boolean
   date: string
-  fill_date: string
+  exec_at: string
   picks: PaperPick[]
   skipped?: PaperPick[]
-  holdings: PaperDay['holdings']
-  trades: PaperDay['trades']
+  holdings: PaperPosition[]
+  trades: PaperFill[]
   nav: number
   cash: number
   ret: number
+}
+
+function dayFromPlan(p: Paper, plan: PaperPlan): DayView {
+  const execDay = (plan.exec_at || '').slice(0, 10)
+  const snap = (p.snapshots ?? []).find((s) => s.date === execDay)
+  const fills = (p.fills ?? []).filter((f) => f.plan_id === plan.id)
+  const pending = plan.status === 'pending'
+  return {
+    pending,
+    date: plan.signal_date,
+    exec_at: plan.exec_at,
+    picks: (plan.intents ?? []).map((it) => ({
+      code: it.code,
+      score: it.score,
+      rank: it.rank,
+      status: it.reason || it.side,
+    })),
+    holdings: pending ? p.book.positions ?? [] : snap?.holdings ?? [],
+    trades: fills,
+    nav: snap?.nav ?? p.book.cash,
+    cash: snap?.cash ?? p.book.cash,
+    ret: snap?.ret ?? 0,
+  }
 }
 
 function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarget) => void }) {
@@ -458,8 +505,8 @@ function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarg
         <div className="note info mb12">
           <span>ℹ</span>
           <div>
-            {day.date} 的选股待下一交易日开盘成交
-            {day.fill_date ? `（预计 ${day.fill_date}）` : ''}。
+            {day.date} 的选股待开盘成交
+            {day.exec_at ? `（${day.exec_at}）` : ''}。
           </div>
         </div>
       )}
@@ -505,7 +552,7 @@ function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarg
       </div>
       {(day.trades ?? []).length > 0 && (
         <>
-          <h4 className="paper-h4">成交 {day.fill_date}</h4>
+          <h4 className="paper-h4">成交 {day.exec_at}</h4>
           <div className="tbl-wrap">
             <table className="tbl">
               <thead>
@@ -529,7 +576,7 @@ function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarg
                     <td className="num">{lots(tr.shares)}</td>
                     <td className="num">{tr.price ? fmt(tr.price, 3) : '—'}</td>
                     <td className="num">{tr.amount ? money(tr.amount) : '—'}</td>
-                    <td className="num">{tr.cost ? money(tr.cost, 2) : '—'}</td>
+                    <td className="num">{tr.fee ? money(tr.fee, 2) : '—'}</td>
                     <td>{statusTag(tr.status)}</td>
                   </tr>
                 ))}
@@ -646,7 +693,7 @@ function CreatePaperModal({
               })
             }
           >
-            {busy ? '计算中…' : '开始模拟'}
+            {busy ? '开户中…' : '开始模拟'}
           </button>
         </>
       }

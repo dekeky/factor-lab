@@ -1,32 +1,34 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 	"time"
 
 	"factor-lab/internal/compose"
 	"factor-lab/internal/engine"
-	"factor-lab/internal/paper"
+	"factor-lab/internal/paper/account"
+	"factor-lab/internal/paper/jobs"
+	"factor-lab/internal/paper/ledger"
+	"factor-lab/internal/paper/matching"
 )
 
-// 面板里给实盘用的可交易列，不进因子 DSL 字段表。
 var hiddenPanelFields = map[string]bool{
 	"raw_close": true, "raw_open": true, "qfq_open": true, "qfq_close": true, "suspend": true, "up_limit": true, "down_limit": true,
 }
 
 type paperReq struct {
-	Name     string  `json:"name"`
-	FactorID int     `json:"factor_id"`
-	ComboID  int     `json:"combo_id"`
-	TopN     int     `json:"top_n"`
-	Buffer   int     `json:"buffer"`
-	Capital  float64 `json:"capital"`
-	Cost     float64 `json:"cost"`
-	Start    string  `json:"start"`
+	Name               string  `json:"name"`
+	FactorID           int     `json:"factor_id"`
+	ComboID            int     `json:"combo_id"`
+	TopN               int     `json:"top_n"`
+	Buffer             int     `json:"buffer"`
+	RebalanceThreshold int     `json:"rebalance_threshold"`
+	Capital            float64 `json:"capital"`
+	Cost               float64 `json:"cost"`
+	SlippageBps        float64 `json:"slippage_bps"`
+	Start              string  `json:"start"`
 }
 
 type paperSource struct {
@@ -34,31 +36,42 @@ type paperSource struct {
 	factorID, comboID                        int
 }
 
-func (s *Server) persistPapers() {
-	if s.paperStore == "" {
-		return
-	}
-	b, err := json.MarshalIndent(s.papers, "", "  ")
-	if err != nil {
-		b, err = json.MarshalIndent(toJSONAny(reflect.ValueOf(s.papers)), "", "  ")
-		if err != nil {
-			return
-		}
-	}
-	writeAtomic(s.paperStore, b)
+// Paper 页面只读拼装：账户、账本、计划、净值快照、成交。不存库。
+type Paper struct {
+	Account   account.Account   `json:"account"`
+	Book      ledger.Book       `json:"book"`
+	Plans     []matching.Plan   `json:"plans"`
+	Snapshots []ledger.Snapshot `json:"snapshots"`
+	Fills     []ledger.Fill     `json:"fills,omitempty"`
 }
 
 func (s *Server) handleListPaper(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	out := make([]paper.Account, len(s.papers))
-	for i, a := range s.papers {
-		out[i] = a.Brief()
+	if s.paperJobs == nil || s.paperJobs.Store == nil {
+		writeErr(w, http.StatusServiceUnavailable, "模拟盘未初始化")
+		return
 	}
-	s.mu.Unlock()
+	accs, err := s.paperJobs.Store.ListAccounts()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]Paper, 0, len(accs))
+	for _, acc := range accs {
+		view, err := s.assemblePaper(acc.ID, false)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out = append(out, view)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
+	if s.paperJobs == nil || s.paperJobs.Store == nil {
+		writeErr(w, http.StatusServiceUnavailable, "模拟盘未初始化")
+		return
+	}
 	var req paperReq
 	if !readJSON(w, r, &req) {
 		return
@@ -76,12 +89,14 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"errors": errs})
 		return
 	}
-	cfg := paper.DefaultConfig()
+	cfg := account.DefaultConfig()
 	if req.TopN > 0 {
 		cfg.TopN = req.TopN
 	}
-	if req.Buffer > 0 {
-		cfg.Buffer = req.Buffer
+	if req.RebalanceThreshold > 0 {
+		cfg.RebalanceThreshold = req.RebalanceThreshold
+	} else if req.Buffer > 0 {
+		cfg.RebalanceThreshold = req.Buffer
 	}
 	if req.Capital > 0 {
 		cfg.Capital = req.Capital
@@ -89,47 +104,35 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 	if req.Cost > 0 {
 		cfg.Cost = req.Cost
 	}
+	if req.SlippageBps > 0 {
+		cfg.SlippageBps = req.SlippageBps
+	}
 	cfg.Start = strings.TrimSpace(req.Start)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = src.defaultName
 	}
-
-	s.mu.Lock()
-	taken := make(map[string]bool, len(s.papers))
-	for _, a := range s.papers {
-		taken[a.Name] = true
-	}
-	if taken[name] {
-		base := name
-		for i := 2; ; i++ {
-			cand := fmt.Sprintf("%s (%d)", base, i)
-			if !taken[cand] {
-				name = cand
-				break
-			}
-		}
+	name, err := s.uniquePaperName(name)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	now := time.Now()
-	acc := paper.Account{
-		ID: s.nextPaperID, Name: name,
-		FactorID: src.factorID, FactorName: src.factorName,
-		ComboID: src.comboID, ComboName: src.comboName,
-		Expr: src.expr, Config: cfg, CreatedAt: now, UpdatedAt: now,
-	}
-	s.nextPaperID++
-	s.mu.Unlock()
-
-	if err := s.runPaper(&acc); err != nil {
+	opened, err := jobs.OpenAccount(r.Context(), s.paperJobs, account.Account{
+		Name: name, FactorID: src.factorID, FactorName: src.factorName,
+		ComboID: src.comboID, ComboName: src.comboName, Expr: src.expr,
+		Config: cfg, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-
-	s.mu.Lock()
-	s.papers = append(s.papers, acc)
-	s.persistPapers()
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, acc)
+	view, err := s.assemblePaper(opened.ID, true)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleGetPaper(w http.ResponseWriter, r *http.Request) {
@@ -137,27 +140,16 @@ func (s *Server) handleGetPaper(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.mu.Lock()
-	i := s.findPaperLocked(id)
-	if i < 0 {
-		s.mu.Unlock()
+	if s.paperJobs == nil || s.paperJobs.Store == nil {
+		writeErr(w, http.StatusServiceUnavailable, "模拟盘未初始化")
+		return
+	}
+	view, err := s.assemblePaper(id, true)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "模拟盘不存在")
 		return
 	}
-	acc := s.papers[i]
-	s.mu.Unlock()
-
-	if err := s.runPaper(&acc); err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	s.mu.Lock()
-	if j := s.findPaperLocked(id); j >= 0 {
-		s.papers[j] = acc
-		s.persistPapers()
-	}
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, acc)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleDeletePaper(w http.ResponseWriter, r *http.Request) {
@@ -165,93 +157,92 @@ func (s *Server) handleDeletePaper(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	i := s.findPaperLocked(id)
-	if i < 0 {
+	if s.paperJobs == nil || s.paperJobs.Store == nil {
+		writeErr(w, http.StatusServiceUnavailable, "模拟盘未初始化")
+		return
+	}
+	if _, err := s.paperJobs.Store.GetAccount(id); err != nil {
 		writeErr(w, http.StatusNotFound, "模拟盘不存在")
 		return
 	}
-	s.papers = append(s.papers[:i], s.papers[i+1:]...)
-	s.persistPapers()
+	if err := s.paperJobs.Store.DeleteAccount(id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
 func (s *Server) handleSyncPaper(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
+	if _, ok := pathID(w, r); !ok {
 		return
 	}
-	s.mu.Lock()
-	i := s.findPaperLocked(id)
-	if i < 0 {
-		s.mu.Unlock()
-		writeErr(w, http.StatusNotFound, "模拟盘不存在")
-		return
-	}
-	acc := s.papers[i]
-	s.mu.Unlock()
-	if err := s.runPaper(&acc); err != nil {
-		writeErr(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	s.mu.Lock()
-	if j := s.findPaperLocked(id); j >= 0 {
-		s.papers[j] = acc
-		s.persistPapers()
-	}
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, acc)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleSyncAllPaper(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	ids := make([]int, len(s.papers))
-	for i, a := range s.papers {
-		ids[i] = a.ID
-	}
-	s.mu.Unlock()
-	n, failed := 0, 0
-	for _, id := range ids {
-		s.mu.Lock()
-		i := s.findPaperLocked(id)
-		if i < 0 {
-			s.mu.Unlock()
-			continue
-		}
-		acc := s.papers[i]
-		s.mu.Unlock()
-		if err := s.runPaper(&acc); err != nil {
-			failed++
-			continue
-		}
-		s.mu.Lock()
-		if j := s.findPaperLocked(id); j >= 0 {
-			s.papers[j] = acc
-		}
-		s.mu.Unlock()
-		n++
-	}
-	s.mu.Lock()
-	s.persistPapers()
-	briefs := make([]paper.Account, len(s.papers))
-	for i, a := range s.papers {
-		briefs[i] = a.Brief()
-	}
-	s.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"synced": n, "failed": failed, "accounts": briefs})
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) runPaper(acc *paper.Account) error {
-	p := s.panel()
-	if p == nil || p.T() == 0 {
-		return fmt.Errorf("尚未加载行情")
+func (s *Server) assemblePaper(id int, withFills bool) (Paper, error) {
+	acc, err := s.paperJobs.Store.GetAccount(id)
+	if err != nil {
+		return Paper{}, err
 	}
-	col, errs := engine.Run(acc.Expr, p)
-	if len(errs) > 0 {
-		return fmt.Errorf("因子无法计算：%s", strings.Join(errsToStrings(errs), "; "))
+	book, err := s.paperJobs.Store.LatestBook(id)
+	if err != nil {
+		return Paper{}, err
 	}
-	return paper.Replay(p, col, acc)
+	if book.LastSettled == "" && book.Cash == 0 && len(book.Positions) == 0 {
+		book.Cash = acc.Config.Capital
+	}
+	book.AccountID = acc.ID
+	plans, err := s.paperJobs.Store.ListPlans(id)
+	if err != nil {
+		return Paper{}, err
+	}
+	snaps, err := s.paperJobs.Store.ListSnapshots(id)
+	if err != nil {
+		return Paper{}, err
+	}
+	if plans == nil {
+		plans = []matching.Plan{}
+	}
+	if snaps == nil {
+		snaps = []ledger.Snapshot{}
+	}
+	view := Paper{Account: acc, Book: book, Plans: plans, Snapshots: snaps}
+	if withFills {
+		fills, err := s.paperJobs.Store.ListFills(id)
+		if err != nil {
+			return Paper{}, err
+		}
+		if fills == nil {
+			fills = []ledger.Fill{}
+		}
+		view.Fills = fills
+	}
+	return view, nil
+}
+
+func (s *Server) uniquePaperName(name string) (string, error) {
+	accs, err := s.paperJobs.Store.ListAccounts()
+	if err != nil {
+		return "", err
+	}
+	taken := make(map[string]bool, len(accs))
+	for _, a := range accs {
+		taken[a.Name] = true
+	}
+	if !taken[name] {
+		return name, nil
+	}
+	base := name
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("%s (%d)", base, i)
+		if !taken[cand] {
+			return cand, nil
+		}
+	}
 }
 
 func (s *Server) resolvePaperSource(factorID, comboID int) (paperSource, int, string) {
@@ -286,13 +277,4 @@ func (s *Server) resolvePaperSource(factorID, comboID int) (paperSource, int, st
 	return paperSource{
 		expr: f.Expr, factorID: f.ID, factorName: f.Name, defaultName: f.Name + " 模拟盘",
 	}, 0, ""
-}
-
-func (s *Server) findPaperLocked(id int) int {
-	for i := range s.papers {
-		if s.papers[i].ID == id {
-			return i
-		}
-	}
-	return -1
 }

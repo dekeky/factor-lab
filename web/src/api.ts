@@ -16,7 +16,7 @@ import type {
   ModelSettings,
   ModelSettingsInput,
   KLine,
-  PaperAccount,
+  Paper,
   SettingsTestResult,
   SessionState,
 } from './types'
@@ -108,8 +108,8 @@ export const api = {
 
   kline: (code: string) => get<KLine>(`/api/kline?code=${encodeURIComponent(code)}`),
 
-  papers: () => get<PaperAccount[]>('/api/paper'),
-  paper: (id: number) => get<PaperAccount>(`/api/paper/${id}`),
+  papers: () => get<Paper[]>('/api/paper'),
+  paper: (id: number) => get<Paper>(`/api/paper/${id}`),
   createPaper: (body: {
     name?: string
     factor_id?: number
@@ -119,12 +119,20 @@ export const api = {
     capital: number
     cost?: number
     start?: string
-  }) => send<PaperAccount>('POST', '/api/paper', body),
+  }) => send<Paper>('POST', '/api/paper', body),
   deletePaper: async (id: number) => {
     await send<{ deleted: boolean }>('DELETE', `/api/paper/${id}`)
   },
-  syncPaper: (id: number) => send<PaperAccount>('POST', `/api/paper/${id}/sync`),
-  syncAllPaper: () => send<{ synced: number; failed: number; accounts: PaperAccount[] }>('POST', '/api/paper/sync'),
+  syncPaper: async (id: number) => {
+    const res = await doFetch(`/api/paper/${id}/sync`, { method: 'POST' })
+    if (!res.ok && res.status !== 204) await parse(res)
+    return get<Paper>(`/api/paper/${id}`)
+  },
+  syncAllPaper: async () => {
+    const res = await doFetch('/api/paper/sync', { method: 'POST' })
+    if (!res.ok && res.status !== 204) await parse(res)
+    return get<Paper[]>('/api/paper')
+  },
 
   assist: (messages: { role: string; content: string }[], expr: string, mode?: 'factor' | 'combo') =>
     send<AssistReply>('POST', '/api/assist', { messages, expr, mode }),

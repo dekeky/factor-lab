@@ -169,6 +169,10 @@ func main() {
 	if ts, ok := src.(*data.TushareSource); ok && ts.IndexCode != "" {
 		stockPool = ts.IndexCode
 	}
+	paperDB := ""
+	if *storePath != "" {
+		paperDB = filepath.Join(filepath.Dir(*storePath), "paper.db")
+	}
 	srv, err := api.New(p, llm, *storePath, *webDir, api.Options{
 		DataSource:   src.Name(),
 		StockPool:    stockPool,
@@ -177,6 +181,8 @@ func main() {
 		CORSOrigins:  splitList(*corsOrig),
 		LLMSettings:  llmCfg,
 		SettingsPath: settingsPath,
+		PaperDB:      paperDB,
+		PaperWorkers: true,
 		// 热加载：重新走一遍数据源加载，成功后原子替换面板（不中断在读的请求）
 		Reload: func(ctx context.Context) (*panel.Panel, error) {
 			np, err := src.Load(ctx)
@@ -231,6 +237,9 @@ func main() {
 	defer shutCancel()
 	if err := httpSrv.Shutdown(shutCtx); err != nil {
 		slog.Error("关闭超时，强制退出", "err", err)
+	}
+	if err := srv.Close(); err != nil {
+		slog.Error("关闭模拟盘队列失败", "err", err)
 	}
 	slog.Info("已退出")
 }

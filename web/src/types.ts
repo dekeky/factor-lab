@@ -303,9 +303,10 @@ export interface SettingsTestResult {
 
 export interface PaperConfig {
   top_n: number
-  buffer?: number
+  rebalance_threshold?: number
   capital: number
   cost: number
+  slippage_bps?: number
   start: string
 }
 
@@ -347,14 +348,40 @@ export interface PaperPick {
   status: string
 }
 
-export interface PaperPicks {
-  date: string
-  fill_date?: string
-  items: PaperPick[]
-  skipped?: PaperPick[]
+export interface PaperIntent {
+  code: string
+  side: string
+  buy_shares: number
+  sell_shares: number
+  actual_buy_shares: number
+  actual_sell_shares: number
+  reason?: string
+  score: number
+  rank: number
 }
 
-export interface PaperTrade {
+export interface PaperPlan {
+  id: number
+  account_id: number
+  signal_date: string
+  exec_at: string
+  intents: PaperIntent[]
+  status: string
+}
+
+export interface PaperSnapshot {
+  account_id: number
+  date: string
+  nav: number
+  cash: number
+  ret: number
+  holdings: PaperPosition[]
+}
+
+export interface PaperFill {
+  id?: number
+  account_id: number
+  plan_id?: number
   date: string
   code: string
   name?: string
@@ -363,33 +390,16 @@ export interface PaperTrade {
   shares: number
   price: number
   amount: number
-  cost: number
+  fee: number
+  slippage?: number
   status: string
 }
 
-export interface PaperDay {
-  date: string
-  fill_date: string
-  nav: number
+export interface PaperBook {
+  account_id: number
   cash: number
-  ret: number
-  picks: PaperPick[]
-  skipped?: PaperPick[]
-  holdings: PaperPosition[]
-  trades: PaperTrade[]
-}
-
-export interface PaperSummary {
-  days: number
-  nav: number
-  return: number
-  max_dd: number
-  last_date: string
-  last_fill: string
-  holdings: number
-  pnl?: number
-  pick_codes?: string[]
-  synced_at: string
+  positions: PaperPosition[]
+  last_settled?: string
 }
 
 export interface PaperAccount {
@@ -403,9 +413,12 @@ export interface PaperAccount {
   config: PaperConfig
   created_at: string
   updated_at: string
-  cash: number
-  positions: PaperPosition[]
-  days?: PaperDay[]
-  pending?: PaperPicks | null
-  summary?: PaperSummary
+}
+
+export interface Paper {
+  account: PaperAccount
+  book: PaperBook
+  plans: PaperPlan[]
+  snapshots: PaperSnapshot[]
+  fills?: PaperFill[]
 }

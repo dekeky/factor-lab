@@ -31,7 +31,8 @@ import (
 	"factor-lab/internal/factors"
 	"factor-lab/internal/ops"
 	"factor-lab/internal/panel"
-	"factor-lab/internal/paper"
+	"factor-lab/internal/paper/jobs"
+	pstore "factor-lab/internal/paper/store"
 )
 
 // Summary 是因子指标的落盘摘要（列表与榜单够用，且避免把整条时序塞进 JSON）。
@@ -147,6 +148,10 @@ type Options struct {
 	ApplyTushareToken func(token string)
 	// LoadUniverse 按指数代码加载另一份成分面板（评价时切换股票池）。空 = 不支持切换。
 	LoadUniverse func(ctx context.Context, index string) (*panel.Panel, error)
+	// PaperDB 模拟盘 SQLite（与 River 共用）。空且因子库有目录时用同目录 paper.db。
+	PaperDB string
+	// PaperWorkers 为 true 时启动 River 消费 paper.generate / paper.execute。
+	PaperWorkers bool
 }
 
 // Server 持有全部运行时依赖。
@@ -169,9 +174,7 @@ type Server struct {
 	comboStore  string // combos.json 路径（与 factors.json 同目录）
 	nextComboID int
 
-	papers      []paper.Account
-	paperStore  string
-	nextPaperID int
+	paperJobs *jobs.Deps
 
 	uniMu sync.Mutex
 	uni   map[string]*uniPanel // 按指数缓存的评价股票池
@@ -208,7 +211,7 @@ func (s *Server) llmName() string {
 func New(p *panel.Panel, llm agent.LLM, store, web string, opt Options) (*Server, error) {
 	s := &Server{
 		llm: llm, llmCfg: opt.LLMSettings.Normalize(), llmPath: opt.SettingsPath,
-		Web: web, store: store, nextID: 1, nextComboID: 1, nextPaperID: 1, Opt: opt,
+		Web: web, store: store, nextID: 1, nextComboID: 1, Opt: opt,
 		uni: make(map[string]*uniPanel),
 	}
 	s.p.Store(p)
@@ -246,22 +249,6 @@ func New(p *panel.Panel, llm agent.LLM, store, web string, opt Options) (*Server
 			return nil, err
 		}
 
-		s.paperStore = filepath.Join(filepath.Dir(store), "paper.json")
-		if b, err := os.ReadFile(s.paperStore); err == nil {
-			var ps []paper.Account
-			if err := json.Unmarshal(b, &ps); err != nil {
-				return nil, fmt.Errorf("实盘文件损坏（%s）：%w", s.paperStore, err)
-			}
-			s.papers = ps
-			for _, a := range ps {
-				if a.ID >= s.nextPaperID {
-					s.nextPaperID = a.ID + 1
-				}
-			}
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
-
 		// 只播种一次：避免用户删除内置因子后重启又复活
 		flag := store + ".seeded"
 		if _, err := os.Stat(flag); os.IsNotExist(err) {
@@ -286,7 +273,62 @@ func New(p *panel.Panel, llm agent.LLM, store, web string, opt Options) (*Server
 			}
 		}
 	}
+	if err := s.initPaper(opt); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+func (s *Server) initPaper(opt Options) error {
+	path := strings.TrimSpace(opt.PaperDB)
+	if path == "" && s.store != "" {
+		path = filepath.Join(filepath.Dir(s.store), "paper.db")
+	}
+	if path == "" {
+		return nil
+	}
+	st, err := pstore.Open(path)
+	if err != nil {
+		return fmt.Errorf("打开模拟盘数据库：%w", err)
+	}
+	if err := jobs.MigrateRiver(context.Background(), st.DB()); err != nil {
+		st.Close()
+		return fmt.Errorf("模拟盘队列迁移：%w", err)
+	}
+	reload := opt.Reload
+	if strings.Contains(strings.ToLower(opt.DataSource), "csv") {
+		reload = nil
+	}
+	deps := &jobs.Deps{Store: st, Panel: s.panel, Reload: reload}
+	client, err := jobs.NewClient(st.DB(), deps)
+	if err != nil {
+		st.Close()
+		return fmt.Errorf("模拟盘队列：%w", err)
+	}
+	deps.Client = client
+	s.paperJobs = deps
+	if opt.PaperWorkers {
+		if err := client.Start(context.Background()); err != nil {
+			st.Close()
+			return fmt.Errorf("启动模拟盘队列：%w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Server) Close() error {
+	if s.paperJobs == nil {
+		return nil
+	}
+	if s.paperJobs.Client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		_ = s.paperJobs.Client.Stop(ctx)
+	}
+	if s.paperJobs.Store != nil {
+		return s.paperJobs.Store.Close()
+	}
+	return nil
 }
 
 // persist 必须在持有 mu 时调用（New 阶段除外）。

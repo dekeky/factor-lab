@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import type { EChartsOption, SeriesOption } from 'echarts'
 import { Chart } from './Chart'
-import type { Metrics, PaperDay, PaperTrade } from '../types'
+import { cssVar, useTheme } from '../lib/theme'
+import type { Metrics, PaperFill, PaperSnapshot } from '../types'
 
 // 转成百分数数值：null/NaN 一律返回 null（ECharts 认作断点）。
 // 注意不能复用 pct()——它返回 "—" 字符串，会让整个 series 画不出来。
@@ -29,6 +30,10 @@ const numOrNull = (v: number | null | undefined): number | null => {
 
 // 分层图：各层平均单期收益柱状 + 累计收益折线（双轴）
 export function LayerChart({ m }: { m: Metrics }) {
+  useTheme()
+  const up = cssVar('--up', '#e54545')
+  const down = cssVar('--down', '#12a36e')
+  const sub = cssVar('--sub', '#a3a3a3')
   const G = m.layer_mean?.length ?? 0
   const labels = Array.from({ length: G }, (_, i) => `Q${i + 1}`)
   const option: EChartsOption = {
@@ -44,8 +49,11 @@ export function LayerChart({ m }: { m: Metrics }) {
       {
         name: '平均单期收益(%)',
         type: 'bar',
-        data: (m.layer_mean ?? []).map(pctNum),
-        itemStyle: { color: '#2563eb' },
+        data: (m.layer_mean ?? []).map((v) => {
+          const n = pctNum(v)
+          const color = n == null || n === 0 ? sub : n > 0 ? up : down
+          return { value: n, itemStyle: { color } }
+        }),
       },
       {
         name: '累计收益(%)',
@@ -61,6 +69,9 @@ export function LayerChart({ m }: { m: Metrics }) {
 
 // IC 时序：IC 与 RankIC 按日折线 + 0.02 参考线
 export function ICChart({ m }: { m: Metrics }) {
+  useTheme()
+  const ink = cssVar('--ink', '#f5f5f5')
+  const sub = cssVar('--sub', '#a3a3a3')
   const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: { data: ['IC', 'RankIC'] },
@@ -74,14 +85,14 @@ export function ICChart({ m }: { m: Metrics }) {
         type: 'line',
         showSymbol: false,
         data: pairs(m.dates, m.ic_by_date),
-        lineStyle: { color: '#9db3cf', width: 1 },
+        lineStyle: { color: sub, width: 1 },
       },
       {
         name: 'RankIC',
         type: 'line',
         showSymbol: false,
         data: pairs(m.dates, m.rank_ic_by_date),
-        lineStyle: { color: '#2563eb', width: 1.5 },
+        lineStyle: { color: ink, width: 1.5 },
       },
     ],
   }
@@ -90,6 +101,8 @@ export function ICChart({ m }: { m: Metrics }) {
 
 // 净值曲线：多头毛/净 vs 全市场
 export function NavChart({ m }: { m: Metrics }) {
+  useTheme()
+  const sub = cssVar('--sub', '#a3a3a3')
   const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: { data: ['多头(毛)', '多头(净)', '全市场'] },
@@ -100,7 +113,7 @@ export function NavChart({ m }: { m: Metrics }) {
     series: [
       { name: '多头(毛)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav), lineStyle: { color: '#c0392b' } },
       { name: '多头(净)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav_net), lineStyle: { color: '#b7791f' } },
-      { name: '全市场', type: 'line', showSymbol: false, data: pairs(m.dates, m.universe_nav), lineStyle: { color: '#5b6b7c' } },
+      { name: '全市场', type: 'line', showSymbol: false, data: pairs(m.dates, m.universe_nav), lineStyle: { color: sub } },
     ],
   }
   return <Chart option={option} />
@@ -108,8 +121,9 @@ export function NavChart({ m }: { m: Metrics }) {
 
 // 分层净值
 export function LayerNavChart({ m }: { m: Metrics }) {
+  useTheme()
   const G = m.layer_nav?.length ?? 0
-  const palette = ['#94b8e3', '#7ea6e8', '#5f8fe0', '#4a7ede', '#346cd6', '#2563eb', '#1d4fae', '#17408c', '#123268', '#0c2447']
+  const palette = ['#8a9a94', '#7d8a86', '#8c7a74', '#a06c64', '#b45c52', '#c44536', '#a3382c', '#8a2e24', '#6f241c', cssVar('--ink', '#f5f5f5')]
   const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: { data: Array.from({ length: G }, (_, i) => `Q${i + 1}`), top: 0 },
@@ -127,8 +141,6 @@ export function LayerNavChart({ m }: { m: Metrics }) {
   }
   return <Chart option={option} />
 }
-
-type TradeMark = 'buy' | 'sell' | 'both'
 
 const TRADE_MARK = {
   buy: {
@@ -149,28 +161,12 @@ const TRADE_MARK = {
   },
 }
 
-function filledTrades(day: PaperDay): PaperTrade[] {
-  return (day.trades ?? []).filter((t) => t.status === 'filled' && t.shares > 0)
+function fillDay(f: PaperFill): string {
+  return (f.date || '').slice(0, 10)
 }
 
-function holdingCodes(day: PaperDay | undefined): Set<string> {
-  return new Set((day?.holdings ?? []).filter((h) => h.shares > 0).map((h) => h.code))
-}
-
-/** 只标换股日（持仓名单变化），避免每日再平衡把净值线盖满。 */
-function tradeMarkKind(day: PaperDay, prev?: PaperDay): TradeMark | null {
-  const trades = filledTrades(day)
-  if (trades.length === 0) return null
-  const before = holdingCodes(prev)
-  const after = holdingCodes(day)
-  let entered = false
-  let exited = false
-  for (const code of after) if (!before.has(code)) entered = true
-  for (const code of before) if (!after.has(code)) exited = true
-  if (!entered && !exited) return null
-  if (entered && exited) return 'both'
-  if (entered) return 'buy'
-  return 'sell'
+function filledOn(fills: PaperFill[] | undefined, day: string): PaperFill[] {
+  return (fills ?? []).filter((f) => f.status === 'filled' && f.shares > 0 && fillDay(f) === day)
 }
 
 function nearestDay(dates: string[], day: string): string {
@@ -194,32 +190,30 @@ function moneyAxis(v: number): string {
 }
 
 export function PaperNavChart({
-  days,
+  snapshots,
+  fills,
   capital,
   onInspectDay,
 }: {
-  days: PaperDay[]
+  snapshots: PaperSnapshot[]
+  fills?: PaperFill[]
   capital: number
-  onInspectDay?: (signalDate: string) => void
+  onInspectDay?: (date: string) => void
 }) {
+  const theme = useTheme()
   const clickable = Boolean(onInspectDay)
-  const { option, dates, byFill } = useMemo(() => {
-    const dates = days.map((d) => d.fill_date)
-    const nav = days.map((d) => d.nav)
-    const byFill = new Map<string, { signal: string; kind: TradeMark | null; buys: number; sells: number }>()
+  const { option, dates } = useMemo(() => {
+    const dates = snapshots.map((d) => d.date)
+    const nav = snapshots.map((d) => d.nav)
+    const byFill = new Map<string, { buys: number; sells: number }>()
     const marks: Record<'buy' | 'sell', Array<[string, number]>> = { buy: [], sell: [] }
-    days.forEach((d, i) => {
-      const trades = filledTrades(d)
-      const kind = tradeMarkKind(d, days[i - 1])
-      byFill.set(d.fill_date, {
-        signal: d.date,
-        kind,
-        buys: trades.filter((t) => t.side === 'buy').length,
-        sells: trades.filter((t) => t.side === 'sell').length,
-      })
-      // 换股日同时画出买卖三角：贴在净值线上下，避免再被折线盖住。
-      if (kind === 'buy' || kind === 'both') marks.buy.push([d.fill_date, d.nav])
-      if (kind === 'sell' || kind === 'both') marks.sell.push([d.fill_date, d.nav])
+    snapshots.forEach((d) => {
+      const trades = filledOn(fills, d.date)
+      const buys = trades.filter((t) => t.side === 'buy').length
+      const sells = trades.filter((t) => t.side === 'sell').length
+      byFill.set(d.date, { buys, sells })
+      if (buys) marks.buy.push([d.date, d.nav])
+      if (sells) marks.sell.push([d.date, d.nav])
     })
     const legend = ['净值', '本金']
     const series: SeriesOption[] = [
@@ -248,7 +242,7 @@ export function PaperNavChart({
         symbolOffset: spec.offset,
         itemStyle: {
           color: spec.color,
-          borderColor: '#fff',
+          borderColor: cssVar('--sheet', '#161616'),
           borderWidth: 1,
         },
         tooltip: { show: false },
@@ -284,8 +278,8 @@ export function PaperNavChart({
       dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 4 }],
       series,
     }
-    return { option, dates, byFill }
-  }, [days, capital, clickable])
+    return { option, dates }
+  }, [snapshots, fills, capital, clickable, theme])
   return (
     <Chart
       option={option}
@@ -293,8 +287,7 @@ export function PaperNavChart({
       onAxisClick={
         onInspectDay
           ? (day) => {
-              const fill = nearestDay(dates, day)
-              onInspectDay(byFill.get(fill)?.signal ?? fill)
+              onInspectDay(nearestDay(dates, day))
             }
           : undefined
       }

@@ -25,7 +25,7 @@ import {
 } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { HelpDoc } from '../types'
 
@@ -106,39 +106,51 @@ function dslLanguage(fieldSet: Set<string>, opSet: Set<string>) {
 }
 
 const dslHighlight = HighlightStyle.define([
-  { tag: tags.comment, color: '#9aa8bd', fontStyle: 'italic' },
-  { tag: tags.keyword, color: '#b45309' },
-  { tag: tags.number, color: '#0369a1' },
-  { tag: tags.macroName, color: '#6d28d9' },
-  { tag: tags.typeName, color: '#0e7490' },
-  { tag: tags.variableName, color: '#24324a' },
-  { tag: tags.operator, color: '#64748b' },
-  { tag: tags.punctuation, color: '#64748b' },
+  { tag: tags.comment, color: 'var(--sub)', fontStyle: 'italic' },
+  { tag: tags.keyword, color: 'var(--warn)' },
+  { tag: tags.number, color: 'var(--info-fg)' },
+  { tag: tags.macroName, color: 'var(--purple-fg)' },
+  { tag: tags.typeName, color: 'var(--ok)' },
+  { tag: tags.variableName, color: 'var(--ink)' },
+  { tag: tags.operator, color: 'var(--sub)' },
+  { tag: tags.punctuation, color: 'var(--sub)' },
 ])
 
+/** tooltips 挂到独立节点，避免主题里的 height:100% 把 body 撑出一屏空白。 */
+function cmTooltipParent(): HTMLElement {
+  const id = 'cm-tooltip-root'
+  let el = document.getElementById(id)
+  if (!el) {
+    el = document.createElement('div')
+    el.id = id
+    document.body.appendChild(el)
+  }
+  return el
+}
+
 const dslTheme = EditorView.theme({
-  '&': { height: '100%', backgroundColor: '#fff', fontSize: '12.5px' },
+  '&': { backgroundColor: 'var(--sheet)', color: 'var(--ink)', fontSize: '12.5px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {
     fontFamily: "var(--mono), 'JetBrains Mono', Consolas, 'Courier New', monospace",
     lineHeight: '1.85',
   },
-  '.cm-content': { caretColor: '#16213a', padding: '8px 0' },
+  '.cm-content': { caretColor: 'var(--ink)', padding: '8px 0' },
   '.cm-line': { padding: '0 14px 0 8px' },
   '.cm-gutters': {
-    backgroundColor: '#fafbfd',
-    color: '#a6b3c4',
+    backgroundColor: 'var(--panel)',
+    color: 'var(--sub)',
     border: 'none',
-    borderRight: '1px solid #eef2f8',
+    borderRight: '1px solid var(--line)',
   },
   '.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 10px', minWidth: '36px' },
-  '.cm-activeLine': { backgroundColor: '#f5f8fd' },
-  '.cm-activeLineGutter': { backgroundColor: '#eef3fb', color: '#6b7a91' },
+  '.cm-activeLine': { backgroundColor: 'var(--hover)' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--hover)', color: 'var(--ink-2)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    backgroundColor: 'rgba(37, 99, 235, 0.18)',
+    backgroundColor: 'color-mix(in srgb, var(--ink) 16%, transparent)',
   },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#16213a' },
-  '.cm-placeholder': { color: '#b3bfce' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ink)' },
+  '.cm-placeholder': { color: 'var(--sub)' },
 })
 
 function hintCard(title: string, desc?: string, extra?: string): HTMLElement {
@@ -253,8 +265,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEdito
   const cmRef = useRef<ReactCodeMirrorRef>(null)
   const onRunRef = useRef(onRun)
   onRunRef.current = onRun
-  const [pos, setPos] = useState({ line: 1, col: 1 })
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const posRef = useRef<HTMLSpanElement>(null)
   const [help, setHelp] = useState<HelpDoc | null>(null)
+
+  // @uiw/react-codemirror 会在 onChange / onUpdate 引用变化时 StateEffect.reconfigure
+  // 整份扩展。拖选跨行会连续触发 selectionSet；若此时用内联 onUpdate + setState，
+  // 手势中途被重配掐断，选区就停在起始行。回调必须保持引用稳定，行/列用 DOM 更新。
+  const emitChange = useCallback((v: string) => {
+    onChangeRef.current(v)
+  }, [])
 
   useEffect(() => {
     api.help().then(setHelp).catch(() => {})
@@ -293,7 +314,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEdito
       closeBrackets(),
       history(),
       indentUnit.of('  '),
-      tooltips({ parent: document.body }),
+      tooltips({ parent: cmTooltipParent() }),
       autocompletion({
         override: [completionSource(options)],
         icons: false,
@@ -320,6 +341,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEdito
         ]),
       ),
       placeholder ? cmPlaceholder(placeholder) : [],
+      EditorView.updateListener.of((u) => {
+        if (!u.selectionSet && !u.docChanged) return
+        const head = u.state.selection.main.head
+        const line = u.state.doc.lineAt(head)
+        const el = posRef.current
+        if (el) el.textContent = `行 ${line.number}, 列 ${head - line.from + 1}`
+      }),
     ]
   }, [fields, operators, help, placeholder])
 
@@ -332,23 +360,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEdito
         <CodeMirror
           ref={cmRef}
           value={value}
-          onChange={onChange}
+          onChange={emitChange}
           extensions={extensions}
           basicSetup={false}
           theme="none"
           height="100%"
-          onUpdate={(u) => {
-            if (!u.selectionSet && !u.docChanged) return
-            const head = u.state.selection.main.head
-            const line = u.state.doc.lineAt(head)
-            setPos({ line: line.number, col: head - line.from + 1 })
-          }}
         />
       </div>
       <div className="cm-status">
-        <span>
-          行 {pos.line}, 列 {pos.col}
-        </span>
+        <span ref={posRef}>行 1, 列 1</span>
         <span>{value.length} 字符</span>
         <span className={`cm-status-${statusLabel.cls}`}>{statusLabel.text}</span>
         <span className="cm-status-hint">Ctrl+Space 补全 · Ctrl+Enter 评价</span>

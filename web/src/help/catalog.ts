@@ -1,6 +1,6 @@
-import startSource from './docs/start.md?raw'
 import syntaxSource from './docs/syntax.md?raw'
-import glossarySource from './docs/glossary.md?raw'
+import fieldsSource from './docs/fields.md?raw'
+import builtinsSource from './docs/builtins.md?raw'
 import faqSource from './docs/faq.md?raw'
 import errorsSource from './docs/errors.md?raw'
 
@@ -21,13 +21,6 @@ export interface FaqDoc {
   group: string
   q: string
   keywords: string
-  body: string
-}
-
-export interface TermDoc {
-  group: string
-  term: string
-  alias: string
   body: string
 }
 
@@ -70,16 +63,17 @@ function splitByHeading(src: string, marker: '## ' | '### '): { title: string; b
     })
 }
 
-const guideFiles = import.meta.glob('./docs/guides/*.md', {
+const chapterFiles = import.meta.glob('./docs/textbook/*.md', {
   query: '?raw',
   import: 'default',
   eager: true,
 }) as Record<string, string>
 
-export const START_MD = startSource
 export const SYNTAX_MD = syntaxSource
+export const FIELDS_MD = fieldsSource
+export const BUILTINS_MD = builtinsSource
 
-export const GUIDES: GuideDoc[] = Object.entries(guideFiles)
+export const GUIDES: GuideDoc[] = Object.entries(chapterFiles)
   .sort(([a], [b]) => a.localeCompare(b, 'en'))
   .map(([path, raw]) => {
     const { data, body } = parseFrontmatter(raw)
@@ -95,7 +89,7 @@ export const GUIDES: GuideDoc[] = Object.entries(guideFiles)
     }
   })
 
-export const FAQ_GROUPS = ['准备工作', '写因子', '看结果', '因子库与组合', '实盘模拟'] as const
+export const FAQ_GROUPS = ['环境与数据', '表达式', '评价与模拟'] as const
 
 export const FAQS: FaqDoc[] = splitByHeading(faqSource, '## ').flatMap(({ title: group, body }) =>
   splitByHeading(body, '### ').map(({ title, body: item }) => {
@@ -114,15 +108,6 @@ export const FAQS: FaqDoc[] = splitByHeading(faqSource, '## ').flatMap(({ title:
       keywords,
       body: lines.slice(start).join('\n').trim(),
     }
-  }),
-)
-
-export const GLOSSARY_GROUPS = ['基础概念', '评价指标', '回测与交易', '数据口径'] as const
-
-export const GLOSSARY: TermDoc[] = splitByHeading(glossarySource, '## ').flatMap(({ title: group, body }) =>
-  splitByHeading(body, '### ').map(({ title, body: item }) => {
-    const [term, alias = ''] = title.split(/\s*\|\s*/)
-    return { group, term: term.trim(), alias: alias.trim(), body: item.trim() }
   }),
 )
 

@@ -8,6 +8,7 @@ import { defaultEvalRange, ParamsPanel, type Params } from '../components/Factor
 import { FactoryResult } from '../components/FactoryResult'
 import { Select } from '../components/Select'
 import { catLabel, fmt, pct, signCls } from '../components/Layout'
+import { colorAlpha, cssVar } from '../lib/theme'
 import { exprBrief, fmtTime } from '../lib/evalHistory'
 import { samePool, universeName } from '../lib/universes'
 
@@ -90,9 +91,9 @@ interface ResultView {
 
 function corrBg(v: number) {
   const a = Math.min(1, Math.abs(v))
-  if (v >= 0.7) return `rgba(192,57,43,${0.1 + a * 0.35})`
-  if (v >= 0.4) return `rgba(180,83,9,${0.08 + a * 0.22})`
-  return `rgba(30,132,73,${0.05 + a * 0.12})`
+  if (v >= 0.7) return colorAlpha(cssVar('--up', '#f07171'), 0.1 + a * 0.35)
+  if (v >= 0.4) return colorAlpha(cssVar('--warn', '#f5a524'), 0.08 + a * 0.22)
+  return colorAlpha(cssVar('--down', '#3dd68c'), 0.05 + a * 0.12)
 }
 
 /**
@@ -126,7 +127,7 @@ export function ComposePage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
-  const [chatWidth, setChatWidth] = useState(() => stored('cc.chatWidth', 400))
+  const [chatWidth, setChatWidth] = useState(() => stored('cc.chatWidth', 320))
   const [chatOpen, setChatOpen] = useState(true)
   const [runOpen, setRunOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -868,7 +869,7 @@ export function ComposePage({
             <>
               <span className="subtle">Esc 取消</span>
               <button className="btn primary sm" style={{ marginLeft: 'auto' }} onClick={doEvaluate} disabled={busy}>
-                {busy ? '评价中…' : '▶ 开始评价'}
+                {busy ? '评价中…' : '开始评价'}
               </button>
             </>
           }

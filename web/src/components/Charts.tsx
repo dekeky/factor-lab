@@ -60,7 +60,7 @@ export function LayerChart({ m }: { m: Metrics }) {
         type: 'line',
         yAxisIndex: 1,
         data: (m.layer_cum ?? []).map(pctNum),
-        itemStyle: { color: '#b7791f' },
+        itemStyle: { color: cssVar('--warn', '#f5a524') },
       },
     ],
   }
@@ -103,6 +103,8 @@ export function ICChart({ m }: { m: Metrics }) {
 export function NavChart({ m }: { m: Metrics }) {
   useTheme()
   const sub = cssVar('--sub', '#a3a3a3')
+  const up = cssVar('--up', '#f07171')
+  const warn = cssVar('--warn', '#f5a524')
   const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: { data: ['多头(毛)', '多头(净)', '全市场'] },
@@ -111,8 +113,8 @@ export function NavChart({ m }: { m: Metrics }) {
     yAxis: { type: 'value', name: '净值', scale: true },
     dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 4 }],
     series: [
-      { name: '多头(毛)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav), lineStyle: { color: '#c0392b' } },
-      { name: '多头(净)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav_net), lineStyle: { color: '#b7791f' } },
+      { name: '多头(毛)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav), lineStyle: { color: up } },
+      { name: '多头(净)', type: 'line', showSymbol: false, data: pairs(m.dates, m.top_nav_net), lineStyle: { color: warn } },
       { name: '全市场', type: 'line', showSymbol: false, data: pairs(m.dates, m.universe_nav), lineStyle: { color: sub } },
     ],
   }
@@ -142,23 +144,25 @@ export function LayerNavChart({ m }: { m: Metrics }) {
   return <Chart option={option} />
 }
 
-const TRADE_MARK = {
-  buy: {
-    name: '买入',
-    color: '#c0392b',
-    symbol: 'triangle' as const,
-    rotate: 0,
-    size: 12,
-    offset: [0, 10] as [number, number],
-  },
-  sell: {
-    name: '卖出',
-    color: '#1e8449',
-    symbol: 'triangle' as const,
-    rotate: 180,
-    size: 12,
-    offset: [0, -10] as [number, number],
-  },
+function tradeMark() {
+  return {
+    buy: {
+      name: '买入',
+      color: cssVar('--up', '#f07171'),
+      symbol: 'triangle' as const,
+      rotate: 0,
+      size: 12,
+      offset: [0, 10] as [number, number],
+    },
+    sell: {
+      name: '卖出',
+      color: cssVar('--down', '#3dd68c'),
+      symbol: 'triangle' as const,
+      rotate: 180,
+      size: 12,
+      offset: [0, -10] as [number, number],
+    },
+  }
 }
 
 function fillDay(f: PaperFill): string {
@@ -215,20 +219,23 @@ export function PaperNavChart({
       if (buys) marks.buy.push([d.date, d.nav])
       if (sells) marks.sell.push([d.date, d.nav])
     })
+    const up = cssVar('--up', '#f07171')
+    const sub = cssVar('--sub', '#a3a3a3')
+    const marksSpec = tradeMark()
     const legend = ['净值', '本金']
     const series: SeriesOption[] = [
-      { name: '净值', type: 'line', showSymbol: false, data: pairs(dates, nav), lineStyle: { color: '#c0392b', width: 1.6 }, z: 3 },
+      { name: '净值', type: 'line', showSymbol: false, data: pairs(dates, nav), lineStyle: { color: up, width: 1.6 }, z: 3 },
       {
         name: '本金',
         type: 'line',
         showSymbol: false,
         data: dates.map((d) => [d, capital]),
-        lineStyle: { color: '#9aa8bd', type: 'dashed', width: 1 },
+        lineStyle: { color: sub, type: 'dashed', width: 1 },
         z: 2,
       },
     ]
     for (const kind of ['buy', 'sell'] as const) {
-      const spec = TRADE_MARK[kind]
+      const spec = marksSpec[kind]
       if (marks[kind].length === 0) continue
       legend.push(spec.name)
       series.push({
@@ -267,7 +274,7 @@ export function PaperNavChart({
             if (row.sells) bits.push(`卖 ${row.sells}`)
             lines.push(bits.join(' · '))
           }
-          if (clickable) lines.push('<span style="color:#6b7a91">点击查看当日明细</span>')
+          if (clickable) lines.push(`<span style="color:${sub}">点击查看当日明细</span>`)
           return lines.join('<br/>')
         },
       },

@@ -70,7 +70,7 @@ export LLM_MODEL=deepseek-chat
 | 指数成分 | `index_weight` | 股票池（取最近一期权重，`-topn 0` = 全部成分；`000300.SH` 无数据时回退 `399300.SZ`） |
 | 日 K | `daily` | 量价字段 |
 | 复权因子 | `adj_factor` | 后复权价，避免除权假信号 |
-| 每日指标 | `daily_basic` | 换手率、PE_TTM、PB、市值 |
+| 每日指标 | `daily_basic` | 换手、量比、PE/PB/PS、股息率、股本、市值、收盘涨跌状态（不写入 close） |
 | 财务指标 | `fina_indicator` | ROE（按 `ann_date` 做 PIT 展开） |
 | ST 名单 | `stock_st` | 按日剔除 ST |
 | 停牌 | `suspend_d` | 纸上账户当日剔除 |
@@ -108,7 +108,7 @@ alpha = cs_rank(ts_arg_max(down * down, 5)) - 0.5
 
 - `ts_` 前缀：沿单只股票时间轴滚动，**窗口必须显式给出**（1~512 整数）
 - `cs_` 前缀：每个交易日横截面上计算
-- 字段：`open/high/low/close/pct_chg/vol/amount/turnover_rate/pe_ttm/pb/total_mv/roe`
+- 字段：`open/high/low/close/pct_chg/vol/amount`，以及 `daily_basic` 有用列（换手/估值/股息/股本/市值/`limit_status`）和 `roe`
 
 ## API
 

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -57,6 +58,11 @@ type Client struct {
 
 	limiter *rateLimiter
 	logger  *slog.Logger
+
+	apiRPM    float64
+	apiWindow time.Duration
+	apiMu     sync.Mutex
+	apiLim    map[string]interface{ wait(context.Context) error }
 }
 
 // NewClient 创建客户端。
@@ -106,6 +112,8 @@ func NewClient(token string, opts ...Option) (*Client, error) {
 		retryBase: cfg.retryBase,
 		retryCap:  cfg.retryCap,
 		logger:    cfg.logger,
+		apiRPM:    cfg.apiRPM,
+		apiWindow: cfg.apiWindow,
 	}
 	if cfg.qps > 0 {
 		c.limiter = newRateLimiter(cfg.qps, cfg.burst)
@@ -170,7 +178,7 @@ func (c *Client) query(ctx context.Context, apiName string, params Params, cfg *
 	delay := c.retryBase
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		if err := c.limiter.wait(ctx); err != nil {
+		if err := c.waitAPI(ctx, apiName); err != nil {
 			return nil, err
 		}
 		tbl, retryable, err := c.doOnce(ctx, apiName, payload)

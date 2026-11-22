@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import type { Combo, Factor, Paper, PaperFill, PaperPlan, PaperPick, PaperPosition } from '../types'
+import type { Combo, Factor, Meta, Paper, PaperFill, PaperPlan, PaperPick, PaperPosition } from '../types'
 import { PaperNavChart } from '../components/Charts'
 import { DatePicker } from '../components/DatePicker'
 import { Modal } from '../components/Modal'
@@ -104,7 +104,7 @@ function planByKey(p: Paper, key: string): PaperPlan | undefined {
   return plans.find((x) => x.signal_date === key) || plans.find((x) => (x.exec_at || '').slice(0, 10) === key)
 }
 
-export function PaperPage({ factors }: { factors: Factor[] }) {
+export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | null }) {
   const [list, setList] = useState<Paper[]>([])
   const [listReady, setListReady] = useState(false)
   const [acc, setAcc] = useState<Paper | null>(null)
@@ -360,6 +360,7 @@ export function PaperPage({ factors }: { factors: Factor[] }) {
       {creating && (
         <CreatePaperModal
           factors={factors}
+          lastTradingDay={meta?.range?.to ?? ''}
           onClose={() => setCreating(false)}
           onCreate={onCreate}
           busy={busy}
@@ -467,7 +468,6 @@ type DayView = {
   date: string
   exec_at: string
   picks: PaperPick[]
-  skipped?: PaperPick[]
   holdings: PaperPosition[]
   trades: PaperFill[]
   nav: number
@@ -511,7 +511,6 @@ function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarg
         </div>
       )}
       <PickTable title="入选" rows={day.picks} onOpen={onOpen} />
-      {(day.skipped?.length ?? 0) > 0 && <PickTable title="当日剔除（停牌 / 涨跌停）" rows={day.skipped!} onOpen={onOpen} />}
       <h4 className="paper-h4">持仓</h4>
       <div className="tbl-wrap mb12">
         <table className="tbl">
@@ -630,11 +629,13 @@ function PickTable({ title, rows, onOpen }: { title: string; rows: PaperPick[]; 
 
 function CreatePaperModal({
   factors,
+  lastTradingDay,
   onClose,
   onCreate,
   busy,
 }: {
   factors: Factor[]
+  lastTradingDay: string
   onClose: () => void
   onCreate: (b: { name: string; factor_id?: number; combo_id?: number; top_n: number; buffer: number; capital: number; cost: number; start: string }) => void
   busy: boolean
@@ -643,10 +644,14 @@ function CreatePaperModal({
   const [combos, setCombos] = useState<Combo[]>([])
   const [source, setSource] = useState(usable[0] ? `f:${usable[0].id}` : '')
   const [topN, setTopN] = useState(10)
-  const [buffer, setBuffer] = useState(0)
+  const [buffer, setBuffer] = useState(20)
   const [capital, setCapital] = useState(1_000_000)
   const [cost, setCost] = useState(0.003)
-  const [start, setStart] = useState('')
+  const [start, setStart] = useState(lastTradingDay)
+
+  useEffect(() => {
+    if (lastTradingDay) setStart((cur) => cur || lastTradingDay)
+  }, [lastTradingDay])
 
   useEffect(() => {
     api.combos().then((rows) => {
@@ -689,7 +694,7 @@ function CreatePaperModal({
                 buffer,
                 capital,
                 cost,
-                start,
+                start: start || lastTradingDay,
               })
             }
           >
@@ -740,8 +745,8 @@ function CreatePaperModal({
         </div>
       </div>
       <div className="field mb12">
-        <label>起始日（可空）</label>
-        <DatePicker value={start} onChange={setStart} placeholder="面板首日" />
+        <label>起始日</label>
+        <DatePicker value={start} onChange={setStart} placeholder="当前交易日" clearable={false} />
       </div>
     </Modal>
   )

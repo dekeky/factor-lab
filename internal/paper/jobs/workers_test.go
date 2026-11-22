@@ -57,7 +57,29 @@ func TestOpenAccountEnqueuesGenerate(t *testing.T) {
 	if args.AccountID != acc.ID || args.SignalDate != "2024-01-01" {
 		t.Fatalf("args %+v", args)
 	}
-	want, _ := shanghaiAt("2024-01-01", "15:10:00")
+	if jobs[0].State != rivertype.JobStateAvailable {
+		t.Fatalf("past 15:10 must enqueue available, got %s", jobs[0].State)
+	}
+}
+
+func TestOpenAccountSchedulesGenerateWhenNotYetDue(t *testing.T) {
+	start := time.Now().In(shanghai).AddDate(0, 0, 2)
+	ymd := start.Format("2006-01-02")
+	env := newEnv(t, testPanelFrom(t, start, 3, 2))
+	if _, err := OpenAccount(context.Background(), env.deps, account.Account{
+		Name: "t", Expr: "alpha = close",
+		Config: account.Config{TopN: 1, Capital: 10000, Start: ymd},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs := listKind(t, env.client, GenerateArgs{}.Kind())
+	if len(jobs) != 1 {
+		t.Fatalf("generate jobs %d", len(jobs))
+	}
+	want, _ := shanghaiAt(ymd, "15:10:00")
+	if jobs[0].State != rivertype.JobStateScheduled {
+		t.Fatalf("future 15:10 must stay scheduled, got %s", jobs[0].State)
+	}
 	if !jobs[0].ScheduledAt.Equal(want) {
 		t.Fatalf("scheduled %v want %v", jobs[0].ScheduledAt, want)
 	}
@@ -191,7 +213,30 @@ func TestGenerateSuccessInsertsPlanAndExecuteJob(t *testing.T) {
 	if args.PlanID != plan.ID || args.AccountID != acc.ID {
 		t.Fatalf("execute args %+v", args)
 	}
-	want, _ := shanghaiAt("2024-01-02", "09:30:00")
+	if jobs[0].State != rivertype.JobStateAvailable {
+		t.Fatalf("past 09:30 must enqueue available, got %s", jobs[0].State)
+	}
+}
+
+func TestGenerateSchedulesExecuteWhenNotYetDue(t *testing.T) {
+	start := time.Now().In(shanghai).AddDate(0, 0, 2)
+	ymd := start.Format("2006-01-02")
+	env := newEnv(t, testPanelFrom(t, start, 3, 2))
+	acc := mustOpen(t, env, ymd)
+	if err := env.gen.Work(context.Background(), &river.Job[GenerateArgs]{
+		Args: GenerateArgs{AccountID: acc.ID, SignalDate: ymd},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs := listKind(t, env.client, ExecuteArgs{}.Kind())
+	if len(jobs) != 1 {
+		t.Fatalf("execute jobs %d", len(jobs))
+	}
+	next := start.AddDate(0, 0, 1).Format("2006-01-02")
+	want, _ := shanghaiAt(next, "09:30:00")
+	if jobs[0].State != rivertype.JobStateScheduled {
+		t.Fatalf("future 09:30 must stay scheduled, got %s", jobs[0].State)
+	}
 	if !jobs[0].ScheduledAt.Equal(want) {
 		t.Fatalf("scheduled %v want %v", jobs[0].ScheduledAt, want)
 	}
@@ -336,9 +381,8 @@ func TestExecuteSuccessWritesFillsAndNextGenerate(t *testing.T) {
 		if a.SignalDate == "2024-01-02" && a.AccountID == acc.ID {
 			found = true
 			next = a
-			want, _ := shanghaiAt("2024-01-02", "15:10:00")
-			if !j.ScheduledAt.Equal(want) {
-				t.Fatalf("next generate scheduled %v", j.ScheduledAt)
+			if j.State != rivertype.JobStateAvailable {
+				t.Fatalf("past 15:10 must enqueue available, got %s", j.State)
 			}
 		}
 	}
@@ -361,6 +405,46 @@ func TestExecuteSuccessWritesFillsAndNextGenerate(t *testing.T) {
 	}
 	if second.SignalDate != "2024-01-02" || second.ExecAt != "2024-01-03 09:30:00" {
 		t.Fatalf("second plan %+v", second)
+	}
+}
+
+func TestExecuteSchedulesNextGenerateWhenNotYetDue(t *testing.T) {
+	start := time.Now().In(shanghai).AddDate(0, 0, 2)
+	ymd := start.Format("2006-01-02")
+	env := newEnv(t, testPanelFrom(t, start, 3, 2))
+	acc := mustOpen(t, env, ymd)
+	if err := env.gen.Work(context.Background(), &river.Job[GenerateArgs]{
+		Args: GenerateArgs{AccountID: acc.ID, SignalDate: ymd},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := env.st.ListPlans(acc.ID)
+	if err != nil || len(plans) != 1 {
+		t.Fatalf("plans %v %v", plans, err)
+	}
+	if err := env.exec.Work(context.Background(), &river.Job[ExecuteArgs]{
+		Args: ExecuteArgs{AccountID: acc.ID, PlanID: plans[0].ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fillDay := start.AddDate(0, 0, 1).Format("2006-01-02")
+	want, _ := shanghaiAt(fillDay, "15:10:00")
+	var got *rivertype.JobRow
+	for _, j := range listKind(t, env.client, GenerateArgs{}.Kind()) {
+		var a GenerateArgs
+		_ = json.Unmarshal(j.EncodedArgs, &a)
+		if a.SignalDate == fillDay && a.AccountID == acc.ID {
+			got = j
+		}
+	}
+	if got == nil {
+		t.Fatal("missing next generate on fill date")
+	}
+	if got.State != rivertype.JobStateScheduled {
+		t.Fatalf("future 15:10 must stay scheduled, got %s", got.State)
+	}
+	if !got.ScheduledAt.Equal(want) {
+		t.Fatalf("scheduled %v want %v", got.ScheduledAt, want)
 	}
 }
 
@@ -449,9 +533,14 @@ func mustOpen(t *testing.T, env *testEnv, start string) account.Account {
 
 func testPanel(t *testing.T, T, N int) *panel.Panel {
 	t.Helper()
+	return testPanelFrom(t, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), T, N)
+}
+
+func testPanelFrom(t *testing.T, start time.Time, T, N int) *panel.Panel {
+	t.Helper()
 	dates := make([]time.Time, T)
 	for i := range dates {
-		dates[i] = time.Date(2024, 1, 1+i, 0, 0, 0, 0, time.UTC)
+		dates[i] = start.AddDate(0, 0, i)
 	}
 	codes := make([]string, N)
 	for j := range codes {

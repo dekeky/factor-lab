@@ -279,10 +279,6 @@ func (s *Store) MarkPlanDoneTx(tx *sql.Tx, id int64, intents []matching.Intent) 
 	return n > 0, err
 }
 
-func (s *Store) InsertFills(fills []ledger.Fill) error {
-	return s.InsertFillsTx(nil, fills)
-}
-
 func (s *Store) InsertFillsTx(tx *sql.Tx, fills []ledger.Fill) error {
 	if len(fills) == 0 {
 		return nil

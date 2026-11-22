@@ -3,7 +3,6 @@ package ledger
 
 import (
 	"fmt"
-	"strings"
 )
 
 type Position struct {
@@ -128,8 +127,4 @@ func indexOf(ps []Position, code string) int {
 		}
 	}
 	return -1
-}
-
-func IsSkipped(status string) bool {
-	return strings.HasPrefix(status, "skipped_")
 }

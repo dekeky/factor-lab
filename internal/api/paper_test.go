@@ -26,6 +26,9 @@ func TestCreatePaperEnqueuesGenerateNotReplay(t *testing.T) {
 	if view.Account.ID < 1 || view.Account.Expr == "" {
 		t.Fatalf("account %+v", view.Account)
 	}
+	if view.Account.Config.RebalanceThreshold != 20 {
+		t.Fatalf("default rebalance_threshold %d want 20", view.Account.Config.RebalanceThreshold)
+	}
 	if len(view.Fills) != 0 {
 		t.Fatalf("create must not write fills: %d", len(view.Fills))
 	}

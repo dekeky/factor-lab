@@ -3,6 +3,16 @@ import { createChart, ColorType, CrosshairMode, type IChartApi, type Time } from
 import { api } from '../api'
 import { Modal } from './Modal'
 import { tvPageUrl, tvSymbol } from '../lib/tv'
+import { colorAlpha, cssVar } from '../lib/theme'
+
+function klineChrome() {
+  const sheet = cssVar('--sheet', '#161616')
+  const ink = cssVar('--ink-2', '#d4d4d4')
+  const line = cssVar('--line', '#2a2a2a')
+  const up = cssVar('--up', '#e54545')
+  const down = cssVar('--down', '#12a36e')
+  return { sheet, ink, line, up, down }
+}
 
 export type KLineTarget = {
   code: string
@@ -57,6 +67,7 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
     let disposed = false
     let chart: IChartApi | null = null
     let ro: ResizeObserver | null = null
+    let onTheme: (() => void) | null = null
     setErr('')
     setBusy(true)
 
@@ -76,25 +87,26 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
             requestAnimationFrame(create)
             return
           }
+          const c = klineChrome()
           chart = createChart(el, {
             layout: {
-              background: { type: ColorType.Solid, color: '#ffffff' },
-              textColor: '#3c4a63',
-              fontFamily: 'Segoe UI, Microsoft YaHei, sans-serif',
+              background: { type: ColorType.Solid, color: c.sheet },
+              textColor: c.ink,
+              fontFamily: 'Manrope, PingFang SC, Microsoft YaHei, sans-serif',
             },
             grid: {
-              vertLines: { color: '#eef2f8' },
-              horzLines: { color: '#eef2f8' },
+              vertLines: { color: c.line },
+              horzLines: { color: c.line },
             },
             crosshair: { mode: CrosshairMode.Normal },
-            rightPriceScale: { borderColor: '#e5eaf2' },
+            rightPriceScale: { borderColor: c.line },
             localization: {
               locale: 'zh-CN',
               dateFormat: 'yyyy/MM/dd',
               timeFormatter: ymdSlash,
             },
             timeScale: {
-              borderColor: '#e5eaf2',
+              borderColor: c.line,
               timeVisible: false,
               tickMarkMaxCharacterLength: 10,
               tickMarkFormatter: (time: Time) => ymdSlash(time),
@@ -103,12 +115,12 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
             height: Math.floor(rect.height),
           })
           const candle = chart.addCandlestickSeries({
-            upColor: '#c0392b',
-            downColor: '#1e8449',
-            borderUpColor: '#c0392b',
-            borderDownColor: '#1e8449',
-            wickUpColor: '#c0392b',
-            wickDownColor: '#1e8449',
+            upColor: c.up,
+            downColor: c.down,
+            borderUpColor: c.up,
+            borderDownColor: c.down,
+            wickUpColor: c.up,
+            wickDownColor: c.down,
           })
           candle.setData(
             kl.bars.map((b) => ({
@@ -128,7 +140,7 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
             kl.bars.map((b) => ({
               time: b.time as Time,
               value: b.volume,
-              color: b.close >= b.open ? 'rgba(192,57,43,0.45)' : 'rgba(30,132,73,0.45)',
+              color: b.close >= b.open ? colorAlpha(c.up, 0.45) : colorAlpha(c.down, 0.45),
             })),
           )
           chart.timeScale().fitContent()
@@ -136,6 +148,31 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
           if (vis) {
             chart.timeScale().setVisibleLogicalRange({ from: vis.from - 10, to: vis.to })
           }
+          onTheme = () => {
+            if (!chart) return
+            const t = klineChrome()
+            chart.applyOptions({
+              layout: {
+                background: { type: ColorType.Solid, color: t.sheet },
+                textColor: t.ink,
+              },
+              grid: {
+                vertLines: { color: t.line },
+                horzLines: { color: t.line },
+              },
+              rightPriceScale: { borderColor: t.line },
+              timeScale: { borderColor: t.line },
+            })
+            candle.applyOptions({
+              upColor: t.up,
+              downColor: t.down,
+              borderUpColor: t.up,
+              borderDownColor: t.down,
+              wickUpColor: t.up,
+              wickDownColor: t.down,
+            })
+          }
+          window.addEventListener('fl-theme', onTheme)
           ro = new ResizeObserver(() => {
             if (!chart || !el) return
             const r = el.getBoundingClientRect()
@@ -155,6 +192,7 @@ export function KLineModal({ target, onClose }: { target: KLineTarget; onClose: 
 
     return () => {
       disposed = true
+      if (onTheme) window.removeEventListener('fl-theme', onTheme)
       ro?.disconnect()
       chart?.remove()
     }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { ThemeSwitch } from './Layout'
 
 /**
  * 登录门：服务端启用 -api-token 时先校验访问令牌。
@@ -37,15 +38,12 @@ export function LoginScreen({ onDone }: { onDone: () => void }) {
     <div className="login-wrap">
       <div className="login-card">
         <div className="login-brand">
-          <span className="mark">FL</span>
           <div>
             <div className="login-title">factor-lab</div>
-            <div className="login-sub">AI 因子研究平台</div>
+            <div className="login-sub">把选股规则写成公式</div>
           </div>
         </div>
-        <p className="login-hint">
-          该服务已启用访问令牌保护。请输入部署时配置的令牌（<code className="inline">FACTOR_LAB_TOKEN</code>）。
-        </p>
+        <p className="login-hint">此服务需要访问令牌。向部署者索取后粘贴到下面。</p>
         <form
           className="login-form"
           onSubmit={(e) => {
@@ -70,6 +68,7 @@ export function LoginScreen({ onDone }: { onDone: () => void }) {
           </button>
         </form>
         <div className="login-foot">令牌校验通过后会以安全 Cookie 记住登录状态（12 小时）。</div>
+        <ThemeSwitch />
       </div>
     </div>
   )

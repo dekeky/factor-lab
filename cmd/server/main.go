@@ -48,7 +48,8 @@ func main() {
 		tsStart   = flag.String("start", "", "起始日期 YYYYMMDD（空 = 接口默认区间）")
 		tsEnd     = flag.String("end", "", "结束日期 YYYYMMDD")
 		parallel  = flag.Int("parallel", 4, "取数并发数")
-		tsQPS     = flag.Float64("tushare-qps", 4, "Tushare 每秒请求上限")
+		tsQPS     = flag.Float64("tushare-qps", 4, "Tushare 每秒请求上限（已弃用，请用 -tushare-rpm）")
+		tsRPM     = flag.Float64("tushare-rpm", 500, "每个 Tushare 接口每分钟请求上限（接口间独立）")
 		storePath = flag.String("store", "data/factors.json", "因子注册表持久化路径（空 = 不持久化）")
 		webDir    = flag.String("web", "web/dist", "前端静态目录（不存在则只提供 API）")
 		apiToken  = flag.String("api-token", os.Getenv("FACTOR_LAB_TOKEN"), "访问令牌（对外监听必填；空 = 仅限本机，不鉴权）")
@@ -69,7 +70,7 @@ func main() {
 		fatal("拒绝启动：对外监听必须配置访问令牌（FACTOR_LAB_TOKEN 或 -api-token），仅本机调试可用 127.0.0.1", "addr", *addr)
 	}
 
-	loadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	loadCtx, cancel := context.WithTimeout(context.Background(), 3*time.Hour)
 	defer cancel()
 
 	// 配置：优先用界面「设置」保存过的 settings.json，其次用环境变量。
@@ -97,13 +98,19 @@ func main() {
 		tsTokenVal = llmCfg.TushareToken
 	}
 
+	dataDir := "data"
+	if *storePath != "" {
+		dataDir = filepath.Dir(*storePath)
+	}
+
 	var src data.Source
 	switch *dataMode {
 	case "tushare":
 		src = &data.TushareSource{
 			Token: tsTokenVal, IndexCode: *tsIndex, TopN: *tsTopN,
 			Start: *tsStart, End: *tsEnd,
-			Concurrency: *parallel, QPS: *tsQPS,
+			Concurrency: *parallel, QPS: *tsQPS, RPM: *tsRPM,
+			DataDir: dataDir,
 		}
 	case "csv":
 		if *csvPath == "" {

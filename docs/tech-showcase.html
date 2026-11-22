@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>factor-lab 技术概览 · 对外展示</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --surface:#ffffff; --surface-2:#f0f3f8; --ink:#16202f; --ink-2:#44516a;
+    --sub:#6b7790; --line:#dfe5ef; --line-2:#eaeef5;
+    --brand:#254b8f; --brand-2:#3b6fd4; --accent:#0e8a86; --amber:#b8730a;
+    --up:#c0392b; --down:#1e8e5a;
+    --radius:14px; --shadow:0 1px 2px rgba(20,35,60,.05), 0 8px 28px rgba(20,35,60,.06);
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.65;-webkit-font-smoothing:antialiased}
+  a{color:var(--brand-2);text-decoration:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,#152845 0%,#214a86 58%,#0e6f79 100%);color:#fff;padding:56px 0 44px;position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;right:-140px;top:-180px;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.10),transparent 68%)}
+  .hero .wrap{position:relative;z-index:1}
+  .eyebrow{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#a9c6ee;font-weight:700;margin:0 0 14px}
+  h1{font-size:42px;line-height:1.2;margin:0 0 14px;font-weight:750;letter-spacing:-.02em}
+  h1 span{color:#8ee0d3}
+  .lede{font-size:17px;max-width:760px;color:#dbe6f5;margin:0 0 30px}
+  .lede strong{color:#fff}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  .kpi{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:14px 16px;backdrop-filter:blur(4px)}
+  .kpi b{display:block;font-size:24px;font-weight:750;letter-spacing:-.02em;line-height:1.25}
+  .kpi small{display:block;font-size:11.5px;color:#b9cee9;margin-top:3px}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;gap:22px;align-items:center;height:52px;overflow-x:auto;white-space:nowrap}
+  nav a{font-size:13px;color:var(--ink-2);font-weight:600;padding:4px 0;border-bottom:2px solid transparent}
+  nav a:hover{color:var(--brand-2);border-bottom-color:var(--brand-2)}
+  nav .tag{font-weight:800;color:var(--brand);font-size:13px;margin-right:6px}
+
+  /* ---------- sections ---------- */
+  section{padding:52px 0 8px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:8px}
+  .sec-no{font:700 12px/1 var(--mono);color:#fff;background:var(--brand);padding:6px 8px;border-radius:6px;letter-spacing:.04em}
+  h2{font-size:26px;margin:0;letter-spacing:-.01em;font-weight:730}
+  .sec-sub{color:var(--sub);font-size:14px;margin:6px 0 26px;max-width:820px}
+  h3{font-size:16px;margin:0 0 8px;font-weight:700}
+  p{margin:0 0 12px}
+  .muted{color:var(--sub);font-size:13px}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px 24px}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card p:last-child,.card ul:last-child{margin-bottom:0}
+  ul{margin:8px 0 12px;padding-left:20px}
+  li{margin:4px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:5px;padding:1px 5px;color:#2b4b86}
+  .chip{display:inline-block;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;background:#e9f1fb;color:var(--brand);margin:0 5px 5px 0}
+  .chip.green{background:#e5f5ef;color:#0d7259}
+  .chip.amber{background:#fbf1de;color:var(--amber)}
+  .mono{font-family:var(--mono)}
+  .accent-bar{border-left:3px solid var(--accent)}
+
+  /* ---------- architecture ---------- */
+  .arch{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px}
+  .layer{display:grid;grid-template-columns:132px 1fr;gap:16px;align-items:center;padding:14px 0;border-bottom:1px dashed var(--line-2)}
+  .layer:last-child{border-bottom:0}
+  .layer-name{font-weight:750;font-size:13px;color:var(--brand);letter-spacing:.02em}
+  .layer-name small{display:block;font-weight:500;color:var(--sub);font-size:11px;letter-spacing:0;margin-top:2px}
+  .boxes{display:flex;flex-wrap:wrap;gap:8px}
+  .box{background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:12.5px;color:var(--ink-2);min-width:120px}
+  .box b{display:block;color:var(--ink);font-size:13px;font-weight:700;margin-bottom:2px}
+  .box.hl{background:#eaf3ff;border-color:#c8ddf8}
+  .box.teal{background:#e8f6f4;border-color:#bfe6e0}
+  .flowline{text-align:center;color:var(--sub);font-size:12px;padding:5px 0;letter-spacing:.3em}
+
+  /* ---------- flow / timeline ---------- */
+  .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;position:relative}
+  .step{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 14px;position:relative;box-shadow:var(--shadow)}
+  .step .n{font:700 11px/1 var(--mono);color:#fff;background:var(--brand-2);width:22px;height:22px;border-radius:50%;display:grid;place-items:center;margin-bottom:10px}
+  .step h4{margin:0 0 5px;font-size:13.5px;font-weight:730}
+  .step p{font-size:12px;color:var(--sub);margin:0;line-height:1.55}
+  .arrow{position:absolute;right:-11px;top:50%;transform:translateY(-50%);color:var(--brand-2);font-size:16px;z-index:2;background:var(--bg);border-radius:50%;width:20px;height:20px;display:grid;place-items:center}
+  .step:last-child .arrow{display:none}
+
+  .seq{display:grid;gap:0}
+  .seq-row{display:grid;grid-template-columns:26px 128px 1fr;gap:14px;align-items:start;padding:11px 0;border-bottom:1px solid var(--line-2)}
+  .seq-row:last-child{border-bottom:0}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--brand-2);margin-top:6px;position:relative}
+  .dot::after{content:"";position:absolute;left:5px;top:12px;width:1px;height:34px;background:var(--line)}
+  .seq-row:last-child .dot::after{display:none}
+  .seq-when{font:700 12px/1.5 var(--mono);color:var(--accent)}
+  .seq-what{font-size:13px;color:var(--ink-2)}
+  .seq-what b{color:var(--ink)}
+
+  /* ---------- data table ---------- */
+  table{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  th{background:var(--surface-2);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);font-weight:700}
+  tr:last-child td{border-bottom:0}
+  td b{font-weight:700}
+  .num{font-family:var(--mono);font-weight:700;color:var(--brand)}
+  .pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;display:inline-block}
+  .pill.p0{background:#fdeaea;color:#b02a2a}
+  .pill.p1{background:#fbf1de;color:var(--amber)}
+  .pill.p2{background:#eaf1fb;color:var(--brand)}
+
+  .callout{background:#eef5ff;border:1px solid #cfe0f7;border-left:4px solid var(--brand-2);border-radius:10px;padding:14px 18px;font-size:13px;color:var(--ink-2);margin:16px 0}
+  .callout.warn{background:#fff8ec;border-color:#f2ddb4;border-left-color:var(--amber)}
+  .callout b{color:var(--ink)}
+
+  .quote{font-size:15px;color:var(--ink);font-weight:600;border-left:3px solid var(--accent);padding:4px 0 4px 16px;margin:14px 0}
+
+  pre{background:#15233a;color:#dce7f7;border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;margin:12px 0}
+  pre .c{color:#7f9dc4}
+  pre .k{color:#8ee0d3}
+  pre .v{color:#f2c987}
+
+  footer{margin-top:56px;background:#15233a;color:#c4d2e6;padding:30px 0;font-size:12.5px}
+  footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  footer b{color:#fff}
+
+  @media(max-width:900px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .g2,.g3,.g4{grid-template-columns:1fr}
+    .steps{grid-template-columns:1fr}
+    .arrow{display:none}
+    .layer{grid-template-columns:1fr}
+    h1{font-size:32px}
+  }
+  @media print{
+    nav{display:none} body{background:#fff} .card,.arch{box-shadow:none}
+    section{break-inside:avoid;padding:24px 0 0} .hero{padding:30px 0}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Technical Overview / 2026-11-22</p>
+    <h1>factor-lab <span>技术概览</span></h1>
+    <p class="lede">单机可部署的 <strong>AI 辅助 A 股因子研究平台</strong>。研究者用一门受限 DSL 写因子，系统在真实行情上完成静态校验、前向收益评价、分层回测、因子组合与纸上模拟交易；AI 只负责把自然语言翻译成候选表达式，<strong>不参与打分、不接触评价口径、不写库</strong>。</p>
+    <div class="kpis">
+      <div class="kpi"><b>21.9k</b><small>行代码（Go 14.2k + TS 7.7k）</small></div>
+      <div class="kpi"><b>106</b><small>测试函数，go test ./... 全绿</small></div>
+      <div class="kpi"><b>35</b><small>个 API 端点</small></div>
+      <div class="kpi"><b>28 / 46</b><small>算子 / 内置经典因子</small></div>
+      <div class="kpi"><b>1.76 GiB</b><small>本机全市场 Parquet 缓存</small></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="wrap">
+    <span class="tag">factor-lab</span>
+    <a href="#arch">架构</a>
+    <a href="#data">数据层</a>
+    <a href="#kernel">计算内核</a>
+    <a href="#eval">评价与组合</a>
+    <a href="#ai">AI 辅助</a>
+    <a href="#paper">实盘模拟</a>
+    <a href="#quality">质量与性能</a>
+    <a href="#edge">边界与路线</a>
+    <a href="#run">快速复现</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- 1 架构 -->
+  <section id="arch">
+    <div class="sec-head"><span class="sec-no">01</span><h2>系统架构</h2></div>
+    <p class="sec-sub">单进程单二进制，Go 直接托管前端静态资源；不需要中间件、不需要独立数据库服务。分层之间靠明确的接口与数据结构解耦。</p>
+
+    <div class="arch">
+      <div class="layer">
+        <div class="layer-name">前端层<small>web/dist · React 18 + Vite</small></div>
+        <div class="boxes">
+          <div class="box hl"><b>CodeMirror 6</b>DSL 编辑器 / 实时校验</div>
+          <div class="box hl"><b>ECharts 5</b>分层 · 净值 · IC 时序</div>
+          <div class="box hl"><b>lightweight-charts</b>个股 K 线</div>
+          <div class="box hl"><b>WebSocket + REST</b>同源 Cookie 鉴权</div>
+        </div>
+      </div>
+      <div class="flowline">▼ HTTP / WS</div>
+      <div class="layer">
+        <div class="layer-name">服务层<small>net/http + 中间件链</small></div>
+        <div class="boxes">
+          <div class="box"><b>35 个 /api/* 端点</b>Go 1.22+ 方法路由</div>
+          <div class="box"><b>鉴权 / 安全头 / CORS</b>panic 恢复 · 访问日志</div>
+          <div class="box teal"><b>atomic.Pointer[Panel]</b>热加载不中断读请求</div>
+        </div>
+      </div>
+      <div class="flowline">▼ 纯 Go 调用</div>
+      <div class="layer">
+        <div class="layer-name">计算内核<small>无外部依赖，可单测</small></div>
+        <div class="boxes">
+          <div class="box"><b>dsl</b>词法 → 语法 → AST → 校验</div>
+          <div class="box"><b>ops + engine</b>28 算子 · 列式求值</div>
+          <div class="box"><b>eval / compose</b>评价 · 组合 · 秩相关</div>
+          <div class="box"><b>agent</b>Eino LLM · 提议裁决</div>
+        </div>
+      </div>
+      <div class="flowline">▼ 读写</div>
+      <div class="layer">
+        <div class="layer-name">数据与持久化<small>本地文件 + SQLite</small></div>
+        <div class="boxes">
+          <div class="box teal"><b>Tushare Pro</b>真实 A 股行情</div>
+          <div class="box teal"><b>Parquet 5 年分片</b>全市场日 K 缓存</div>
+          <div class="box"><b>内存 Panel</b>T×N 列式，NaN 缺失</div>
+          <div class="box"><b>factors.json / combos.json</b>原子写入</div>
+          <div class="box"><b>paper.db</b>SQLite + River 队列</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:18px">
+      <div class="card accent-bar">
+        <h3>研究闭环</h3>
+        <div class="steps" style="grid-template-columns:1fr;gap:6px">
+          <div class="step" style="box-shadow:none;padding:10px 12px"><h4>因子工厂 → 评价引擎 → 因子库 → 因子组合 → 实盘模拟</h4><p>五个页面自写 Hash 路由，无路由库；净值、成交、逐日名单回流研究端。</p></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>技术栈</h3>
+        <p class="muted" style="margin-bottom:8px">后端 / 数据</p>
+        <span class="chip">Go 1.26.1</span><span class="chip">Eino 0.9.22</span><span class="chip">parquet-go 0.32.1</span><span class="chip">River 0.51.2</span><span class="chip">modernc sqlite</span><span class="chip">gorilla/websocket</span>
+        <p class="muted" style="margin:12px 0 8px">前端</p>
+        <span class="chip green">React 18 + TS 5.5</span><span class="chip green">Vite 5</span><span class="chip green">CodeMirror 6</span><span class="chip green">ECharts 5.5</span><span class="chip green">react-markdown</span>
+      </div>
+      <div class="card">
+        <h3>部署形态</h3>
+        <ul style="font-size:13px;color:var(--ink-2)">
+          <li>Windows 双击 <code>start.bat</code> 即生产模式</li>
+          <li>Go 二进制 + <code>web/dist</code> 静态托管</li>
+          <li>对外监听未配访问令牌 <b>拒绝启动</b></li>
+          <li>优雅关闭 20s，关闭时一并停队列</li>
+          <li>首次全量行情回补超时上限 3 小时</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 数据层 -->
+  <section id="data">
+    <div class="sec-head"><span class="sec-no">02</span><h2>数据层：可信研究结果的地基</h2></div>
+    <p class="sec-sub">口径集中在数据入口一次性处理，研究侧无法绕过。这是「回测漂亮、上线失效」问题最有效的一道防线。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>三套价格口径 + 防前视偏差</h3>
+        <table>
+          <tr><th>处理</th><th>实现</th></tr>
+          <tr><td><b>后复权主列</b></td><td><code>open/close</code> = raw × (当日 adj / 区间首个非零 adj)；<code>pct_chg</code> 由后复权价重算</td></tr>
+          <tr><td><b>前复权 / 未复权</b></td><td>并存 <code>qfq_*</code>（基准=区间末日）与 <code>raw_*</code>，供撮合与涨跌停判定</td></tr>
+          <tr><td><b>PIT 财务</b></td><td><code>fina_indicator</code> 按 <code>ann_date</code> as-of 展开：任一交易日只用当时已公告的 ROE</td></tr>
+          <tr><td><b>ST 剔除</b></td><td>按 <code>(ts_code, trade_date)</code> 剔除，当日量价/估值/ROE 全为 NaN，不进截面</td></tr>
+          <tr><td><b>强校验</b></td><td>6 个必需字段任一整列无有效值即启动失败；可选数据集失败只进质量摘要</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>全市场日 K 的 Parquet 增量缓存</h3>
+        <p style="font-size:13px;color:var(--ink-2)">不再按成分股逐只打 <code>daily</code> / <code>daily_basic</code>：按交易日拉全市场落盘，面板按指数成分切片读取。</p>
+        <div class="seq" style="margin-top:10px">
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">trade_cal</div><div class="seq-what">取 2000 年至今全部开市日，与分片已有日期做<b>差集</b></div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">两天一批</div><div class="seq-what"><code>daily</code> ∥ <code>daily_basic</code> 并行拉取，各走独立 500 次/分钟令牌桶</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">截断回退</div><div class="seq-what"><b>≥6000 行或 has_more</b> 视为截断，两天窗口拆成单日分页重拉</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">幂等合并</div><div class="seq-what">按 <code>(ts_code, trade_date)</code> 合并，<b>不写入 daily_basic.close</b></div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">原子落盘</div><div class="seq-what">5 年一片 <code>2000-2004.parquet</code>…，tmp + rename（Windows 兼容）</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">Load</div><div class="seq-what">只读重叠分片，按成分代码与起止日期过滤进内存 Panel</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout"><b>口径提示：</b><code>qfq_*</code> 在代码中是<strong>前复权</strong>，<code>open/close</code> 主列是<strong>后复权</strong>，两者基准相反，对接时不要混用。另外 <code>adj_factor</code> / 财务 / 停牌 / 涨跌停仍按成分逐代码请求，未进 Parquet；回补起始恒为 <code>20000101</code>，不受 <code>-start</code> 约束。</div>
+  </section>
+
+  <!-- 3 计算内核 -->
+  <section id="kernel">
+    <div class="sec-head"><span class="sec-no">03</span><h2>因子语言与计算内核</h2></div>
+    <p class="sec-sub">一门受限、可静态校验的表达式语言，而不是通用脚本。所有算子输出统一的列向量，缺失值语义全局一致。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>DSL 示例</h3>
+<pre><span class="c"># 中间变量 = 赋值；最后一行即因子值</span>
+mom20 = close / <span class="k">ts_delay</span>(close, 20) - 1
+alpha = -1 * <span class="k">cs_rank</span>(mom20)
+
+<span class="c"># if 是注册算子，不是控制流关键字</span>
+down  = <span class="k">if</span>(pct_chg &lt; 0, <span class="k">ts_std_dev</span>(pct_chg, 20), close)
+alpha = <span class="k">cs_rank</span>(<span class="k">ts_arg_max</span>(down * down, 5)) - 0.5</pre>
+        <p style="font-size:13px;color:var(--ink-2)">静态校验硬约束：算子白名单、参数个数、<b>窗口常数必须 1~512 整数</b>、字段/变量先定义后使用、变量名不得与字段重名、嵌套 ≤ 64 层。<code>Parse</code> / <code>Validate</code> 返回错误列表而非首错即停。</p>
+      </div>
+      <div class="card">
+        <h3>算子库（实测 28 个）</h3>
+        <table>
+          <tr><th>类别</th><th>数量</th><th>代表</th></tr>
+          <tr><td><b>ts_ 时序</b><br><span class="muted">沿单股时间轴滚动，窗口必填</span></td><td class="num">13</td><td><code>ts_delay</code> <code>ts_corr</code> <code>ts_decay_linear</code> <code>ts_arg_max</code></td></tr>
+          <tr><td><b>cs_ 截面</b><br><span class="muted">每个交易日横截面</span></td><td class="num">4</td><td><code>cs_rank</code> <code>cs_zscore</code> <code>cs_demean</code> <code>cs_scale</code></td></tr>
+          <tr><td><b>数学 / 逻辑</b></td><td class="num">11</td><td><code>abs</code> <code>log</code> <code>power</code> <code>if</code> <code>and/or/not</code></td></tr>
+        </table>
+        <p class="muted" style="margin-top:10px">执行器逐 AST 节点产生长度 <code>T×N</code> 的列向量；算术任一 NaN 即 NaN，比较/逻辑把 NaN 当假，滚动与截面聚合跳过 NaN。计算内核不并发，并发在 API 层（批量评价 4 路）。</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>46 条内置经典因子</h3>
+      <p style="font-size:13px;color:var(--ink-2);margin-bottom:10px">启动时一次性播种进因子库（<code>.seeded</code> 防复活），之后与用户因子<strong>完全平等：可编辑、可删除、可导出</strong>。</p>
+      <span class="chip">alpha101 · 20</span><span class="chip">alpha158 · 7</span><span class="chip">momentum · 3</span><span class="chip">reversal · 3</span><span class="chip">volatility · 4</span><span class="chip">volume · 4</span><span class="chip">valuation / quality / size · 5</span>
+    </div>
+  </section>
+
+  <!-- 4 评价与组合 -->
+  <section id="eval">
+    <div class="sec-head"><span class="sec-no">04</span><h2>评价与组合：口径锁死</h2></div>
+    <p class="sec-sub">只有口径写死，不同因子、不同人、不同时间做出的结果才可比较。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>唯一收益对齐公式</h3>
+<pre><span class="c">信号日 t 只用 t 及以前数据；t+1 收盘执行；持有 H 个交易日</span>
+fwd_ret(t) = close(t+1+H) / close(t+1) - 1
+lastSignal  = T - 2 - H</pre>
+        <table style="margin-top:12px">
+          <tr><th>参数</th><th>默认</th><th>可经 API 覆盖</th></tr>
+          <tr><td>Horizon 持有期</td><td class="num">1</td><td>是（≥1）</td></tr>
+          <tr><td>Groups 分层数</td><td class="num">10</td><td>是（≥2）</td></tr>
+          <tr><td>Cost 单边成本</td><td class="num">0.003</td><td>是（≥0）</td></tr>
+          <tr><td>MinStocks 最小截面</td><td class="num">5</td><td><b>否</b></td></tr>
+          <tr><td>基准 / 主口径</td><td colspan="2">全市场等权 / <b>多头净超额</b></td></tr>
+        </table>
+        <p class="muted" style="margin-top:10px">输出 IC、RankIC、ICIR、t 值、P(IC&gt;0.02)、分层净值、多头毛/净净值、换手与年化成本。退化截面跳过 IC 统计但照常推进净值，有专门回归测试。</p>
+      </div>
+      <div class="card">
+        <h3>组合：复用同一引擎，不另起炉灶</h3>
+<pre><span class="c"># [1] 因子名  weight=0.5000</span>
+p0_mom20 = close / <span class="k">ts_delay</span>(close, 20) - 1
+z0 = <span class="k">cs_zscore</span>(-1 * <span class="k">cs_rank</span>(p0_mom20))
+alpha = z0 * <span class="v">0.500000</span> + z1 * <span class="v">0.500000</span></pre>
+        <ul style="font-size:13px;color:var(--ink-2)">
+          <li><b>变量隔离</b>：中间变量加 <code>pN_</code> 前缀重命名，函数名不误改</li>
+          <li><b>标准化</b>：终值 <code>cs_zscore</code> × 权重 × 方向，按 Σ|w| 归一化；上限 20 个成分</li>
+          <li><b>同质化告警</b>：逐日 Spearman 秩相关取均值，<b>&gt; 0.7</b> 提示「高度同质，分散效果有限」</li>
+          <li>生成的仍是 DSL，交给同一个 <code>engine.Run</code> + <code>eval.Evaluate</code></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 AI -->
+  <section id="ai">
+    <div class="sec-head"><span class="sec-no">05</span><h2>AI 辅助：提议 / 裁决分离</h2></div>
+    <p class="sec-sub">最值得对外讲的一条架构纪律：<strong>LLM 的输出永远不是可执行结果</strong>。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>闭环流程</h3>
+        <div class="seq">
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">prompt</div><div class="seq-what">运行时注入 <b>当前面板字段 + 算子白名单</b>；combo 模式只给因子库元数据，<b>禁止发明因子</b></div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">LLM</div><div class="seq-what">Eino 接 OpenAI 协议端点（DeepSeek 等），要求严格 JSON；流式增量只推 <code>reply</code> 给用户</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">parse</div><div class="seq-what">自研平衡括号 + 字符串感知的 JSON 提取，兼容围栏与前后文字</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">裁决</div><div class="seq-what">factor → <code>engine.Check</code>（与 /api/check 同一函数）；combo → 白名单校验（id 可用、去重、≥2 个）</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">失败</div><div class="seq-what">把<b>具体错误原文回灌</b>下一轮重试，最多 3 次 LLM 调用</div></div>
+          <div class="seq-row"><div class="dot"></div><div class="seq-when">通过</div><div class="seq-what"><code>done</code> 返回候选，<b>由用户确认后</b>才应用到编辑器</div></div>
+        </div>
+        <div class="callout" style="margin-bottom:0"><b>边界：</b>全程不调用 <code>eval.Evaluate</code>、不写库、不执行工具；模型看不到也改不了评价口径。未配置模型时一次性接口与 WS 升级前均返回 <b>503</b>，代码中不存在任何模板降级生成器。</div>
+      </div>
+      <div class="card">
+        <h3>工程约束</h3>
+        <table>
+          <tr><th>项</th><th>值</th></tr>
+          <tr><td>单轮超时</td><td class="num">90s</td></tr>
+          <tr><td>重试上限</td><td class="num">3 次 LLM 调用</td></tr>
+          <tr><td>WS 读上限 / 写 deadline</td><td class="num">64 KB / 30s</td></tr>
+          <tr><td>消息条数 / 单条长度</td><td class="num">1~40 / ≤4000 字符</td></tr>
+          <tr><td>事件类型</td><td><code>delta</code> <code>retry</code> <code>done</code> <code>error</code></td></tr>
+          <tr><td>配置热更新</td><td>先构造模型成功才落盘替换；密钥只回掩码；原子写 <code>0600</code></td></tr>
+          <tr><td>连接降级</td><td>WS 握手失败回退 <code>POST /api/assist</code>，复用同一套事件状态机</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 模拟盘 -->
+  <section id="paper">
+    <div class="sec-head"><span class="sec-no">06</span><h2>实盘模拟：任务化的 T+1 撮合</h2></div>
+    <p class="sec-sub">从「打开页面把整段历史重跑一遍」重构为<strong>持久化、可恢复、幂等</strong>的事件驱动模型。River 队列 + SQLite，领域层与编排层彻底分离。</p>
+
+    <div class="steps" style="margin-bottom:18px">
+      <div class="step"><div class="n">1</div><h4>开户</h4><p>冻结公式与规则<br>初始快照 + 首条 generate</p><span class="arrow">›</span></div>
+      <div class="step"><div class="n">2</div><h4>generate</h4><p>信号日 15:10 收盘打分<br>写出 Plan 与股数</p><span class="arrow">›</span></div>
+      <div class="step"><div class="n">3</div><h4>execute</h4><p>次交易日 09:30 开盘成交<br>先卖后买</p><span class="arrow">›</span></div>
+      <div class="step"><div class="n">4</div><h4>记账</h4><p>同一事务写 fill / snapshot<br>plan → done</p><span class="arrow">›</span></div>
+      <div class="step"><div class="n">5</div><h4>下一轮</h4><p>成交日 15:10 再排 generate<br>互相推着走</p></div>
+    </div>
+
+    <div class="grid g3">
+      <div class="card">
+        <h3>五包分层</h3>
+        <ul style="font-size:12.5px;color:var(--ink-2)">
+          <li><code>account</code> 冻结的账户实体</li>
+          <li><code>matching</code> 纯撮合函数，不碰 DB / 队列</li>
+          <li><code>ledger</code> 只改内存账本</li>
+          <li><code>jobs</code> River worker，只做编排与事务</li>
+          <li><code>store</code> SQLite + 内嵌 schema</li>
+        </ul>
+        <p class="muted">Generate 与 Execute 互不调用；HTTP 不写成交；GET 全为 SELECT。</p>
+      </div>
+      <div class="card">
+        <h3>四层幂等</h3>
+        <ul style="font-size:12.5px;color:var(--ink-2)">
+          <li>River <code>ByArgs</code> 任务去重</li>
+          <li><code>plan</code> 唯一索引 <code>(account_id, substr(exec_at,1,10))</code></li>
+          <li><code>snapshot</code> 主键 <code>(account_id, date)</code></li>
+          <li>条件更新 <code>WHERE status='pending'</code></li>
+        </ul>
+        <p class="muted">缺数 <code>JobSnooze(1min)</code> 自愈，不写计划不改账；重启后 River 自动接管，无需 kick。</p>
+      </div>
+      <div class="card">
+        <h3>撮合口径</h3>
+        <ul style="font-size:12.5px;color:var(--ink-2)">
+          <li>默认 TopN 10 / 阈值 20 / 本金 100 万 / 单边 0.3%</li>
+          <li>权重偏移 &gt; 3% 触发 rebalance</li>
+          <li>股数按<b>信号日收盘</b>估算，向下取整 100 股</li>
+          <li>先卖后买；现金不足每次减 100 股</li>
+          <li>停牌 / 涨跌停 / 缺价记 <code>skipped_*</code>，<b>不换股顶替</b></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 质量 -->
+  <section id="quality">
+    <div class="sec-head"><span class="sec-no">07</span><h2>质量、性能与实测</h2></div>
+    <p class="sec-sub">以下数字来自本机 <code>go test ./...</code> 与项目生产就绪报告，均可复现。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>测试：106 个 Test 函数，全部通过</h3>
+<pre>$ go test ./...
+ok  internal/agent      ok  internal/api        0.724s
+ok  internal/compose    ok  internal/data        0.646s
+ok  internal/dsl        ok  internal/engine      1.906s
+ok  internal/eval       ok  internal/factors     1.835s
+ok  internal/ops        ok  internal/paper/jobs
+ok  internal/paper/ledger / matching / store</pre>
+        <p class="muted">覆盖 DSL 解析与校验、算子 NaN 边界、Alpha101 端到端、退化截面、组合秩相关、46 因子全量执行冒烟、AI JSON 提取与流式解码、Parquet 往返与 6000 行回退、后复权 / PIT / ST 契约、模拟盘 14 个队列用例、鉴权与 WebSocket。另有 12 个 CDP 截图与交互回归脚本。</p>
+      </div>
+      <div class="card">
+        <h3>性能基线（历史联调，量级参考）</h3>
+        <table>
+          <tr><th>规模</th><th>耗时</th></tr>
+          <tr><td>50 只 × 683 日（3.4 万 K 线）加载</td><td class="num">19.3s</td></tr>
+          <tr><td><b>300 只 × 1653 日（47.6 万 K 线）加载</b></td><td class="num">2m42s</td></tr>
+          <tr><td><b>46 因子全库评价（4 并发）</b></td><td class="num">2.2s</td></tr>
+          <tr><td>ST 剔除 / ROE PIT 记录</td><td class="num">1,355 / 36,820</td></tr>
+          <tr><td>全库平均 |RankIC|</td><td class="num">0.0102</td></tr>
+        </table>
+        <div class="callout warn" style="margin-bottom:0"><b>一条值得分享的分析结论：</b>多个因子出现「RankIC 为正、但多头累计超额为负」。根因是 300 只股票分 10 层每层仅 30 只，累计超额被少数极端个股主导。<b>分层累计超额不能单独作为因子有效性判据</b>，需配合中性化、分组稳健性与多空拆分。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 边界 -->
+  <section id="edge">
+    <div class="sec-head"><span class="sec-no">08</span><h2>已知边界与演进路线</h2></div>
+    <p class="sec-sub">边界写清楚，比只讲优点更便于别的团队判断能否复用。以下均如实列示。</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>架构级边界</h3>
+        <table>
+          <tr><th>级别</th><th>缺口</th><th>建议</th></tr>
+          <tr><td><span class="pill p0">P0</span></td><td><b>无用户体系与租户隔离</b>，用户互相可见因子与会话</td><td>登录 + <code>owner_id</code> + 查询强制过滤</td></tr>
+          <tr><td><span class="pill p1">P1</span></td><td>因子库为单机 JSON，多实例互相覆盖</td><td>迁 PostgreSQL / 乐观锁</td></tr>
+          <tr><td><span class="pill p1">P1</span></td><td>业务接口无限流、无监控告警</td><td>按 token/IP 限流 + <code>/metrics</code></td></tr>
+          <tr><td><span class="pill p1">P1</span></td><td>行情不自动刷新</td><td>收盘后定时任务 + 失败告警</td></tr>
+          <tr><td><span class="pill p2">P2</span></td><td>无审计日志 / 结果缓存 / LLM 成本配额</td><td>审计表、缓存键、按用户配额</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>研究能力边界与实现注意点</h3>
+        <ul style="font-size:13px;color:var(--ink-2)">
+          <li>股票池为指数成分，<b>历史成分取最近一期权重</b>，长区间存在幸存者偏差；全 A 股约 5000 只未压测</li>
+          <li>缺 <code>cs_neutralize</code>，<b>未做行业/市值中性化</b>；未做 winsorize 与分组稳健性检验</li>
+          <li>成交价为开盘/收盘单价，无 VWAP、无盘中分批撮合</li>
+          <li><code>/api/paper/*/sync</code> 当前为 204 空实现，缺数由 worker 每分钟自愈</li>
+          <li><code>TopNavNet</code> 换手计算比较同一份当期持仓，与 <code>TopNav</code> 数值相同；换手/成本指标本身正确</li>
+          <li>AI 的 90s 超时为硬编码，不随设置中的 <code>TimeoutSec</code> 变化</li>
+        </ul>
+        <div class="quote">README 中「11/4/10 个算子」「自研 textarea 编辑器」「TradingView 日 K」「-tushare-qps 限流」等描述已过时，以代码与《技术概览》文档为准。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 快速复现 -->
+  <section id="run">
+    <div class="sec-head"><span class="sec-no">09</span><h2>快速复现</h2></div>
+    <p class="sec-sub">单二进制启动，不需要任何中间件。Windows 下双击 <code>start.bat</code> 即可。</p>
+    <div class="card">
+<pre><span class="c"># 编译</span>
+go build -o factor-lab.exe ./cmd/server
+npm --prefix web ci &amp;&amp; npm --prefix web run build
+
+<span class="c"># 生产启动（Tushare Pro 真实 A 股数据）</span>
+./factor-lab.exe -addr 127.0.0.1:8080 \
+  -data tushare -index 000300.SH -topn 0 -start 20200101 \
+  -store data/factors.json -web web/dist \
+  -api-token "$FACTOR_LAB_TOKEN"
+
+<span class="c"># 验证</span>
+go test ./...
+curl -s http://127.0.0.1:8080/api/health
+curl -X POST -H "X-API-Token: $TOKEN" http://127.0.0.1:8080/api/admin/reload</pre>
+      <p class="muted" style="margin-bottom:0">环境变量：<code>TUSHARE_TOKEN</code>、<code>FACTOR_LAB_TOKEN</code>、<code>LLM_BASE_URL</code>/<code>LLM_API_KEY</code>/<code>LLM_MODEL</code>。Tushare token 与模型也可在界面左下角「设置」里填，写入 <code>data/settings.json</code>，保存即热生效。鉴权：浏览器登录后用 HttpOnly Cookie（<code>fl_session</code>，12h，SameSite=Strict），脚本用 <code>X-API-Token</code> 头。</p>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div><b>factor-lab · 技术概览</b>　｜　面向外部团队的系统介绍与技术交流材料</div>
+    <div>完整文档：<b>docs/TECHNICAL_OVERVIEW.md</b>　｜　基准版本 2026-11-22　｜　数据来自代码通读与本机实测</div>
+  </div>
+</footer>
+
+<script>
+  // 导航当前区块高亮（轻量，无外部依赖）
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav a'));
+    var secs  = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+    function update(){
+      var y = window.scrollY + 120, idx = 0;
+      secs.forEach(function(s,i){ if(s && s.offsetTop <= y) idx = i; });
+      links.forEach(function(a,i){
+        a.style.color = i===idx ? 'var(--brand-2)' : '';
+        a.style.borderBottomColor = i===idx ? 'var(--brand-2)' : '';
+      });
+    }
+    window.addEventListener('scroll', update, {passive:true});
+    update();
+  })();
+</script>
+</body>
+</html>

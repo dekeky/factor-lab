@@ -97,7 +97,7 @@ expr 的要求：完整可独立运行（包含全部中间变量与赋值行，
 	for name, sig := range ops.Sigs() {
 		sb.WriteString(fmt.Sprintf("- %s/%d", name, sig.MinArgs))
 	}
-	sb.WriteString("\n\n字段语义：close 为后复权收盘价；pct_chg 为日收益率；vol 成交量；amount 成交额；turnover_rate 换手率(%)；pe_ttm/pb 估值；total_mv 总市值(万元)；roe 为 ROE（PIT 口径，百分数）。")
+	sb.WriteString("\n\n字段语义：close 为后复权收盘价；pct_chg 为日收益率；vol 成交量；amount 成交额；turnover_rate / turnover_rate_f 换手率(%)；volume_ratio 量比；pe / pe_ttm / pb / ps / ps_ttm 估值(倍)；dv_ratio / dv_ttm 股息率(%)；total_share / float_share / free_share 股本(万股)；total_mv / circ_mv 市值(万元)；limit_status 收盘涨跌状态(0–6)；roe 为 ROE（PIT 口径，百分数）。")
 	return sb.String()
 }
 

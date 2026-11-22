@@ -12,7 +12,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{TopN: 10, Capital: 1_000_000, Cost: 0.003}
+	return Config{TopN: 10, RebalanceThreshold: 20, Capital: 1_000_000, Cost: 0.003}
 }
 
 type Account struct {

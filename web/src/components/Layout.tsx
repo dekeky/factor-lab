@@ -1,4 +1,6 @@
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Health, Meta } from '../types'
+import { applyTheme, readTheme, type Theme } from '../lib/theme'
 
 export type PageKey = 'factory' | 'library' | 'compose' | 'paper' | 'help'
 
@@ -8,12 +10,70 @@ export function displayLLM(name?: string) {
   return name.replace(/^eino:/, '')
 }
 
-export const PAGES: { key: PageKey; label: string; icon: string; group: string; desc: string }[] = [
-  { key: 'factory', label: '因子工厂', icon: '⚙', group: '研究', desc: '用 DSL 编写因子并即时评价' },
-  { key: 'compose', label: '因子组合', icon: '⊕', group: '研究', desc: '多因子加权合成与同质化检查' },
-  { key: 'library', label: '因子库', icon: '▤', group: '研究', desc: '管理、批量评价、导入导出' },
-  { key: 'paper', label: '实盘模拟', icon: '▣', group: '实盘', desc: '冻结因子逐日打分调仓' },
-  { key: 'help', label: '帮助文档', icon: '?', group: '帮助', desc: '新手教程、名词解释、公式与算子参考' },
+function Ico({ children }: { children: ReactNode }) {
+  return (
+    <svg className="ico-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {children}
+    </svg>
+  )
+}
+
+const NAV_ICON: Record<PageKey | 'settings', ReactNode> = {
+  factory: (
+    <Ico>
+      <polyline points="7 8 3 12 7 16" />
+      <polyline points="17 8 21 12 17 16" />
+      <line x1="14" y1="4" x2="10" y2="20" />
+    </Ico>
+  ),
+  compose: (
+    <Ico>
+      <rect x="4" y="4" width="16" height="16" rx="1" />
+      <line x1="12" y1="8" x2="12" y2="16" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+    </Ico>
+  ),
+  library: (
+    <Ico>
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </Ico>
+  ),
+  paper: (
+    <Ico>
+      <polyline points="3 17 9 11 13 15 21 7" />
+      <polyline points="15 7 21 7 21 13" />
+    </Ico>
+  ),
+  help: (
+    <Ico>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 0 1 5 1c0 1.5-2.5 2-2.5 3.5" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </Ico>
+  ),
+  settings: (
+    <Ico>
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="18" x2="20" y2="18" />
+      <circle cx="8" cy="6" r="2" />
+      <circle cx="16" cy="12" r="2" />
+      <circle cx="10" cy="18" r="2" />
+    </Ico>
+  ),
+}
+
+export const PAGES: { key: PageKey; label: string; group: string; desc: string }[] = [
+  { key: 'factory', label: '因子工厂', group: '研究', desc: '写公式并评价' },
+  { key: 'compose', label: '因子组合', group: '研究', desc: '多因子加权合成' },
+  { key: 'library', label: '因子库', group: '研究', desc: '管理与批量评价' },
+  { key: 'paper', label: '实盘模拟', group: '实盘', desc: '虚拟资金按日选股' },
+  { key: 'help', label: '帮助', group: '帮助', desc: '因子研究教材、DSL 与字段参考' },
 ]
 
 const GROUPS: { name: string; keys: PageKey[] }[] = [
@@ -27,23 +87,23 @@ export function Sidebar({
   onNav,
   counts,
   llm,
+  health,
   onSettings,
 }: {
   page: PageKey
   onNav: (p: PageKey) => void
   counts: Record<string, number>
   llm?: string
+  health?: Health | null
   onSettings?: () => void
 }) {
   const online = !!llm && llm !== 'unconfigured'
+  const src = health?.data_source ? health.data_source.split(':')[0] : ''
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="name">
-          <span className="mark">FL</span>
-          factor-lab
-        </div>
-        <div className="tagline">AI 因子研究平台</div>
+        <div className="name">factor-lab</div>
+        <div className="tagline">把选股规则写成公式</div>
       </div>
       <nav>
         {GROUPS.map((g) => (
@@ -53,7 +113,7 @@ export function Sidebar({
               const p = PAGES.find((x) => x.key === k)!
               return (
                 <button key={k} className={`nav-item ${page === k ? 'on' : ''}`} onClick={() => onNav(k)} title={p.desc}>
-                  <span className="ico">{p.icon}</span>
+                  <span className="ico">{NAV_ICON[k]}</span>
                   <span>{p.label}</span>
                   {counts[k] ? <span className="badge">{counts[k]}</span> : null}
                 </button>
@@ -62,27 +122,45 @@ export function Sidebar({
           </div>
         ))}
       </nav>
+      <ThemeSwitch />
       <button className="nav-item sidebar-set" onClick={onSettings} title="配置 Tushare Token 与 AI 助手模型">
-        <span className="ico">⚙</span>
+        <span className="ico">{NAV_ICON.settings}</span>
         <span>设置</span>
-        <span className={`dot ${online ? 'ok' : 'off'}`} style={{ marginLeft: 'auto' }} />
       </button>
       <div className="foot">
-        <div>
-          <span className={`dot ${online ? 'ok' : 'off'}`} />
-          LLM {online ? displayLLM(llm) : '未配置'}
-        </div>
-        <div>数据源 · 本地面板</div>
-        <div style={{ opacity: 0.7 }} title="前端构建时间，用于确认是否最新版本">
-          build {__BUILD_ID__}
-        </div>
+        <div>{online ? displayLLM(llm) : '模型未配置'}</div>
+        {src && health ? (
+          <div>
+            {src} {health.panel.dates}×{health.panel.stocks}
+          </div>
+        ) : (
+          <div>行情未加载</div>
+        )}
       </div>
     </aside>
   )
 }
 
+export function ThemeSwitch() {
+  const [theme, setTheme] = useState<Theme>(readTheme)
+  useEffect(() => {
+    const on = () => setTheme(readTheme())
+    window.addEventListener('fl-theme', on)
+    return () => window.removeEventListener('fl-theme', on)
+  }, [])
+  return (
+    <div className="theme-switch" role="group" aria-label="外观">
+      <button type="button" className={theme === 'dark' ? 'on' : ''} onClick={() => applyTheme('dark')}>
+        深色
+      </button>
+      <button type="button" className={theme === 'light' ? 'on' : ''} onClick={() => applyTheme('light')}>
+        浅色
+      </button>
+    </div>
+  )
+}
+
 export function Topbar({
-  page,
   health,
   meta,
 }: {
@@ -90,32 +168,27 @@ export function Topbar({
   health: Health | null
   meta: Meta | null
 }) {
-  const cur = PAGES.find((p) => p.key === page)!
   const srcShort = (s?: string) => (s ? s.split(':')[0] : '')
   return (
     <header className="topbar">
-      <div className="title">{cur.label}</div>
-      <div className="crumb">{cur.desc}</div>
-      <div className="spacer" />
-      {health && (
-        <>
-          <span className="pill ok" title={health.data_source}>
-            <span className="dot ok" />
-            {srcShort(health.data_source) || '行情'}
+      <div className="tape">
+        {health && (
+          <>
+            <span title={health.data_source}>{srcShort(health.data_source) || '行情'}</span>
+            <span>
+              <b>{health.panel.dates}</b> 日 × <b>{health.panel.stocks}</b> 股
+            </span>
+            <span>
+              {health.range.from} — {health.range.to}
+            </span>
+          </>
+        )}
+        {meta && (
+          <span>
+            {meta.fields.length} 字段 / {meta.operators.length} 算子
           </span>
-          <span className="pill">
-            面板 <b>{health.panel.dates}</b> 日 × <b>{health.panel.stocks}</b> 股
-          </span>
-          <span className="pill">
-            {health.range.from} ~ {health.range.to}
-          </span>
-        </>
-      )}
-      {meta && (
-        <span className="pill">
-          字段 <b>{meta.fields.length}</b> · 算子 <b>{meta.operators.length}</b>
-        </span>
-      )}
+        )}
+      </div>
     </header>
   )
 }
@@ -143,7 +216,6 @@ export function PageHead({
 export function Empty({ text, hint }: { text: string; hint?: string }) {
   return (
     <div className="empty">
-      <div className="big">∅</div>
       <p>{text}</p>
       {hint && <p className="subtle mt4">{hint}</p>}
     </div>

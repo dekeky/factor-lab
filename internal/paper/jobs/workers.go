@@ -130,9 +130,7 @@ func OpenAccount(ctx context.Context, deps *Deps, acc account.Account) (account.
 	if err := deps.Store.InsertSnapshotTx(tx, snap); err != nil {
 		return account.Account{}, err
 	}
-	if _, err := deps.Client.InsertTx(ctx, tx, GenerateArgs{AccountID: id, SignalDate: start}, &river.InsertOpts{
-		ScheduledAt: at,
-	}); err != nil {
+	if _, err := deps.Client.InsertTx(ctx, tx, GenerateArgs{AccountID: id, SignalDate: start}, insertWhenDue(at)); err != nil {
 		return account.Account{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -217,9 +215,7 @@ func (w *GenerateWorker) Work(ctx context.Context, job *river.Job[GenerateArgs])
 	if err != nil {
 		return err
 	}
-	if _, err := w.Deps.Client.InsertTx(ctx, tx, ExecuteArgs{AccountID: acc.ID, PlanID: pid}, &river.InsertOpts{
-		ScheduledAt: execAt,
-	}); err != nil {
+	if _, err := w.Deps.Client.InsertTx(ctx, tx, ExecuteArgs{AccountID: acc.ID, PlanID: pid}, insertWhenDue(execAt)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -332,9 +328,7 @@ func (w *ExecuteWorker) Work(ctx context.Context, job *river.Job[ExecuteArgs]) e
 		}
 		return err
 	}
-	if _, err := w.Deps.Client.InsertTx(ctx, tx, GenerateArgs{AccountID: acc.ID, SignalDate: day}, &river.InsertOpts{
-		ScheduledAt: at,
-	}); err != nil {
+	if _, err := w.Deps.Client.InsertTx(ctx, tx, GenerateArgs{AccountID: acc.ID, SignalDate: day}, insertWhenDue(at)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -396,6 +390,15 @@ func shanghaiAt(ymd, hms string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return t, nil
+}
+
+// insertWhenDue 时刻已过则立刻可跑（available），未到则 ScheduledAt 等到那一秒。
+func insertWhenDue(at time.Time) *river.InsertOpts {
+	opts := &river.InsertOpts{}
+	if at.After(time.Now()) {
+		opts.ScheduledAt = at
+	}
+	return opts
 }
 
 func parseExecAt(execAt string) (time.Time, error) {
@@ -471,10 +474,6 @@ func generateReady(p *panel.Panel, expr, signalDate string) bool {
 	}
 	if _, ok := nextSession(p, signalDate); !ok {
 		return false
-	}
-	fields := map[string]bool{}
-	for name := range p.Cols {
-		fields[name] = true
 	}
 	_, errs := engine.Run(expr, p)
 	if len(errs) > 0 {

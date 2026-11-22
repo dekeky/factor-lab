@@ -20,6 +20,8 @@ type clientConfig struct {
 	retryCap  time.Duration
 	qps       float64
 	burst     int
+	apiRPM    float64
+	apiWindow time.Duration
 	logger    *slog.Logger
 	userAgent string
 }
@@ -92,6 +94,20 @@ func WithRetry(max int, base, cap time.Duration) Option {
 			cap = base
 		}
 		c.retryMax, c.retryBase, c.retryCap = max, base, cap
+		return nil
+	}
+}
+
+// WithAPIRateLimit 按 api_name 独立限流，perMin 为每个接口每分钟请求上限。
+//
+// tushare 的频次限制按接口独立计算；perMin<=0 表示关闭按接口限流（默认）。
+func WithAPIRateLimit(perMin float64) Option {
+	return func(c *clientConfig) error {
+		if perMin <= 0 {
+			c.apiRPM = 0
+			return nil
+		}
+		c.apiRPM = perMin
 		return nil
 	}
 }

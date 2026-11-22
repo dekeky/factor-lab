@@ -128,11 +128,6 @@ export const api = {
     if (!res.ok && res.status !== 204) await parse(res)
     return get<Paper>(`/api/paper/${id}`)
   },
-  syncAllPaper: async () => {
-    const res = await doFetch('/api/paper/sync', { method: 'POST' })
-    if (!res.ok && res.status !== 204) await parse(res)
-    return get<Paper[]>('/api/paper')
-  },
 
   assist: (messages: { role: string; content: string }[], expr: string, mode?: 'factor' | 'combo') =>
     send<AssistReply>('POST', '/api/assist', { messages, expr, mode }),

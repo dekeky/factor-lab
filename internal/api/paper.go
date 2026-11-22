@@ -23,8 +23,8 @@ type paperReq struct {
 	FactorID           int     `json:"factor_id"`
 	ComboID            int     `json:"combo_id"`
 	TopN               int     `json:"top_n"`
-	Buffer             int     `json:"buffer"`
-	RebalanceThreshold int     `json:"rebalance_threshold"`
+	Buffer             *int    `json:"buffer"`
+	RebalanceThreshold *int    `json:"rebalance_threshold"`
 	Capital            float64 `json:"capital"`
 	Cost               float64 `json:"cost"`
 	SlippageBps        float64 `json:"slippage_bps"`
@@ -93,10 +93,10 @@ func (s *Server) handleCreatePaper(w http.ResponseWriter, r *http.Request) {
 	if req.TopN > 0 {
 		cfg.TopN = req.TopN
 	}
-	if req.RebalanceThreshold > 0 {
-		cfg.RebalanceThreshold = req.RebalanceThreshold
-	} else if req.Buffer > 0 {
-		cfg.RebalanceThreshold = req.Buffer
+	if req.RebalanceThreshold != nil {
+		cfg.RebalanceThreshold = *req.RebalanceThreshold
+	} else if req.Buffer != nil {
+		cfg.RebalanceThreshold = *req.Buffer
 	}
 	if req.Capital > 0 {
 		cfg.Capital = req.Capital

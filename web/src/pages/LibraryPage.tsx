@@ -166,19 +166,19 @@ export function LibraryPage({
   return (
     <div className="lib-page">
       <div className="lib-head">
-        <p>因子全部落库（含内置经典因子），可编辑、复制、导入导出；指标由同一套裁判批量计算，口径一致才可横向比较。</p>
+        <div>
+          <h2>因子库</h2>
+          <p>内置和自建因子都在这里。同一套评价口径，方便横向比较。</p>
+        </div>
         <div className="actions">
-          <button className="btn" onClick={() => onNav('factory')}>
-            写新因子
-          </button>
           <button className="btn" onClick={() => fileRef.current?.click()}>
             导入
           </button>
           <a className="btn" href={api.exportUrl()} download>
             导出
           </a>
-          <button className="btn primary" onClick={() => setEditing('new')}>
-            + 新建因子
+          <button className="btn primary" onClick={() => onNav('factory')}>
+            写新因子
           </button>
         </div>
       </div>
@@ -543,7 +543,7 @@ function EditDrawer({
         <textarea ref={taRef} className="editor" value={expr} spellCheck={false} onChange={(e) => setExpr(e.target.value)} />
         <div className="row tight mt8">
           {fields.map((f) => (
-            <button key={f} className="tag gray" style={{ cursor: 'pointer', border: '1px solid #e5eaf2' }} onClick={() => insert(f)}>
+            <button key={f} className="tag gray" style={{ cursor: 'pointer', border: '1px solid var(--line)' }} onClick={() => insert(f)}>
               {f}
             </button>
           ))}

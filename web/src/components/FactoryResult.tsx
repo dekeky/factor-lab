@@ -17,7 +17,7 @@ export function FactoryResult({ metrics, busy }: { metrics: Metrics | null; busy
         <div className="fw-empty-mark">▤</div>
         <div>
           <b>还没有评价结果</b>
-          <p className="subtle">点击上方「▶ 运行评价」或按 Ctrl+Enter，结果会以弹窗展示，也可在此回看。</p>
+          <p className="subtle">点击上方「运行评价」或按 Ctrl+Enter，结果会以弹窗展示，也可在此回看。</p>
         </div>
       </div>
     )

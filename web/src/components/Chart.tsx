@@ -1,5 +1,24 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts'
+import { cssVar } from '../lib/theme'
+
+function paint(inst: echarts.ECharts, option: echarts.EChartsOption) {
+  const ink = cssVar('--ink', '#f5f5f5')
+  const sub = cssVar('--sub', '#a3a3a3')
+  const line = cssVar('--line', '#2a2a2a')
+  const sheet = cssVar('--sheet', '#161616')
+  inst.setOption(option)
+  inst.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: ink },
+    legend: { textStyle: { color: sub } },
+    tooltip: {
+      backgroundColor: sheet,
+      borderColor: line,
+      textStyle: { color: ink },
+    },
+  })
+}
 
 // useChart: 挂载 ECharts 实例并在 option 变化时更新。
 //
@@ -47,7 +66,7 @@ export function useChart(option: echarts.EChartsOption | null, onAxisClick?: (da
       }
       const inst = echarts.init(el, undefined, { renderer: 'canvas' })
       instRef.current = inst
-      if (optionRef.current) inst.setOption(optionRef.current)
+      if (optionRef.current) paint(inst, optionRef.current)
       zrClick = (e: { offsetX: number; offsetY: number }) => {
         if (!clickRef.current) return
         const point: [number, number] = [e.offsetX, e.offsetY]
@@ -67,14 +86,20 @@ export function useChart(option: echarts.EChartsOption | null, onAxisClick?: (da
       if (document.visibilityState === 'visible') instRef.current?.resize()
     }
     const onResize = () => instRef.current?.resize()
+    const onTheme = () => {
+      const inst = instRef.current
+      if (inst && optionRef.current) paint(inst, optionRef.current)
+    }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('resize', onResize)
+    window.addEventListener('fl-theme', onTheme)
 
     return () => {
       disposed = true
       cancelAnimationFrame(raf)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('resize', onResize)
+      window.removeEventListener('fl-theme', onTheme)
       ro?.disconnect()
       if (zrClick) instRef.current?.getZr().off('click', zrClick)
       instRef.current?.dispose()
@@ -87,7 +112,7 @@ export function useChart(option: echarts.EChartsOption | null, onAxisClick?: (da
     const inst = instRef.current
     if (!inst) return // 实例尚未创建（等待容器尺寸），创建时会用 optionRef 应用
     inst.clear()
-    inst.setOption(option)
+    paint(inst, option)
   }, [option])
 
   return ref

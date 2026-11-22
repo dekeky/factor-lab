@@ -116,7 +116,7 @@ export function FactoryPage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
-  const [chatWidth, setChatWidth] = useState(() => stored('fw.chatWidth', 400))
+  const [chatWidth, setChatWidth] = useState(() => stored('fw.chatWidth', 320))
   const [chatOpen, setChatOpen] = useState(true)
   const [runOpen, setRunOpen] = useState(false)
   const editorRef = useRef<CodeEditorHandle>(null)
@@ -625,7 +625,7 @@ export function FactoryPage({
                 评价记录{records.length ? ` (${records.length})` : ''}
               </button>
               <button className="btn primary sm" onClick={openRun} disabled={busy || !active.expr.trim()}>
-                {busy ? '评价中…' : '▶ 运行评价'}
+                {busy ? '评价中…' : '运行评价'}
               </button>
             </div>
           </header>
@@ -711,7 +711,7 @@ export function FactoryPage({
             <>
               <span className="subtle">Esc 取消</span>
               <button className="btn primary sm" style={{ marginLeft: 'auto' }} onClick={doEvaluate}>
-                ▶ 开始评价
+                开始评价
               </button>
             </>
           }

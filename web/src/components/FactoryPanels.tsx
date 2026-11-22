@@ -143,7 +143,7 @@ export function RefPanel({
     <div className="fw-panel">
       <div className="flex between center mb8">
         <div className="subtle">点击插入到光标处 · 字段来自当前数据面板，算子来自引擎白名单</div>
-        <a className="help-inline-link" href="#/help">查看完整 DSL 文档 →</a>
+        <a className="help-inline-link" href="#/help">查看完整 DSL 文档</a>
       </div>
       <div className="fw-ref-label">数据字段</div>
       <div className="row tight mb8">

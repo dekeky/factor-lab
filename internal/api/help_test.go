@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"factor-lab/internal/data"
 	"factor-lab/internal/factors"
 	"factor-lab/internal/panel"
 )
@@ -53,5 +54,14 @@ func TestBuildHelpDocReflectsRuntimeCapabilities(t *testing.T) {
 	}
 	if len(doc.Builtins) == 0 || doc.Builtins[0].Expr == "" || doc.Builtins[0].Description == "" {
 		t.Fatal("built-in factors should include expressions and descriptions")
+	}
+}
+
+func TestDailyBasicFieldsHaveDocs(t *testing.T) {
+	for _, name := range data.DailyBasicCols {
+		item, ok := fieldDocs[name]
+		if !ok || item.Description == "" || item.Unit == "" || item.Tip == "" {
+			t.Errorf("%s 缺少帮助文档（description/unit/tip）", name)
+		}
 	}
 }

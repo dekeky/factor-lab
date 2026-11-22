@@ -154,6 +154,7 @@ func classify(code int, msg string, api string, httpStatus int) *APIError {
 		e.Kind = KindParam
 	case 40203:
 		e.Kind = KindRateLimited
+		e.RetryAfter = 60
 	default:
 		e.Kind = classifyByMessage(msg)
 	}

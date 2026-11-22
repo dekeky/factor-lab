@@ -24,6 +24,7 @@ export default function App() {
   const [bootErr, setBootErr] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
 
   // 鉴权门：服务端启用令牌时，未登录只渲染登录页，不发任何业务请求。
   const gated = session !== null && session.required && !session.authed
@@ -93,40 +94,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <Sidebar page={page} onNav={nav} counts={counts} llm={health?.llm} onSettings={() => setSettingsOpen(true)} />
+      <Sidebar page={page} onNav={nav} counts={counts} llm={health?.llm} health={health} onSettings={() => setSettingsOpen(true)} />
       <div className="main">
+        {!bannerDismissed && (
+          <SysBanners bootErr={bootErr} health={health} onOpenSettings={() => setSettingsOpen(true)} onDismiss={() => setBannerDismissed(true)} />
+        )}
         {page !== 'factory' && page !== 'compose' && <Topbar page={page} health={health} meta={meta} />}
         <div className={`content${page === 'factory' || page === 'compose' ? ' content-factory' : ''}`}>
-          {bootErr && (
-            <div className="note err mb12">
-              <span>⚠</span>
-              <div>{bootErr}</div>
-            </div>
-          )}
-
-          {health && health.panel.dates === 0 && (
-            <div className="note warn mb12">
-              <span>⚠</span>
-              <div>
-                <b>尚未加载行情</b>：请在左下角「设置」填写 Tushare Token 后保存（也可设环境变量 TUSHARE_TOKEN）。
-              </div>
-            </div>
-          )}
-
-          {health?.data_report?.optional_errors && health.data_report.optional_errors.length > 0 && (
-            <div className="note warn mb12">
-              <span>⚠</span>
-              <div>
-                部分可选数据集缺失，相关因子将不可用：
-                {health.data_report.optional_errors.map((e, i) => (
-                  <div key={i} className="subtle">
-                    {e}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {page === 'factory' && (
             <FactoryPage meta={meta} llm={health?.llm ?? 'unconfigured'} health={health} onSaved={refresh} />
           )}
@@ -134,7 +108,7 @@ export default function App() {
             <LibraryPage factors={factors} meta={meta} onChanged={refresh} onNav={(p) => nav(p)} />
           )}
           {page === 'compose' && <ComposePage factors={factors} meta={meta} health={health} llm={health?.llm ?? 'unconfigured'} onChanged={refresh} />}
-          {page === 'paper' && <PaperPage factors={factors} />}
+          {page === 'paper' && <PaperPage factors={factors} meta={meta} />}
           {page === 'help' && <HelpPage />}
 
           {page !== 'help' && !loaded && !bootErr && <div className="busy-line">正在加载因子库…</div>}
@@ -144,4 +118,72 @@ export default function App() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onSaved={refreshHealth} />}
     </div>
   )
+}
+
+function humanizeDataError(raw: string): string {
+  const s = raw.toLowerCase()
+  if (s.includes('stock_st') || s.includes('st_')) return 'ST 列表'
+  if (s.includes('suspend')) return '停牌'
+  if (s.includes('daily_basic')) return '每日指标'
+  if (s.includes('income') || s.includes('fina') || s.includes('balancesheet') || s.includes('cashflow')) return '财务数据'
+  if (s.includes('index_weight') || s.includes('index')) return '指数成分'
+  return ''
+}
+
+function summarizeOptionalErrors(errors: string[]): string {
+  const names = [...new Set(errors.map(humanizeDataError).filter(Boolean))]
+  const timeout = errors.some((e) => /deadline|timeout|超时/i.test(e))
+  const what = names.length ? names.join('、') : '部分可选数据'
+  return `${what}${timeout ? '请求超时' : '未能加载'}，相关因子暂不可用。`
+}
+
+function SysBanners({
+  bootErr,
+  health,
+  onOpenSettings,
+  onDismiss,
+}: {
+  bootErr: string
+  health: Health | null
+  onOpenSettings: () => void
+  onDismiss: () => void
+}) {
+  if (bootErr) {
+    return (
+      <div className="sys-banner err">
+        <div className="grow">{bootErr}</div>
+        <button type="button" onClick={onDismiss} aria-label="关闭">
+          ×
+        </button>
+      </div>
+    )
+  }
+  if (health && health.panel.dates === 0) {
+    return (
+      <div className="sys-banner warn">
+        <div className="grow">
+          行情尚未加载。打开
+          <button type="button" onClick={onOpenSettings} style={{ textDecoration: 'underline', margin: '0 4px' }}>
+            设置
+          </button>
+          填写 Tushare Token 后保存。
+        </div>
+        <button type="button" onClick={onDismiss} aria-label="关闭">
+          ×
+        </button>
+      </div>
+    )
+  }
+  const optional = health?.data_report?.optional_errors
+  if (optional && optional.length > 0) {
+    return (
+      <div className="sys-banner warn" title={optional.join('\n')}>
+        <div className="grow">{summarizeOptionalErrors(optional)} 可稍后在设置里保存以重试。</div>
+        <button type="button" onClick={onDismiss} aria-label="关闭">
+          ×
+        </button>
+      </div>
+    )
+  }
+  return null
 }

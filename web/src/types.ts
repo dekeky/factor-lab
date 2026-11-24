@@ -350,12 +350,11 @@ export interface PaperPick {
 
 export interface PaperIntent {
   code: string
+  name?: string
+  label?: string
   side: string
-  buy_shares: number
-  sell_shares: number
-  actual_buy_shares: number
-  actual_sell_shares: number
-  reason?: string
+  shares: number
+  actual_shares: number
   score: number
   rank: number
 }
@@ -366,6 +365,7 @@ export interface PaperPlan {
   signal_date: string
   exec_at: string
   intents: PaperIntent[]
+  picks?: PaperPick[]
   status: string
 }
 

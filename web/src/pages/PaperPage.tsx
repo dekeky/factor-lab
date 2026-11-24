@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import type { Combo, Factor, Meta, Paper, PaperFill, PaperPlan, PaperPick, PaperPosition } from '../types'
+import type { Combo, Factor, Meta, Paper, PaperFill, PaperIntent, PaperPlan, PaperPick, PaperPosition } from '../types'
 import { PaperNavChart } from '../components/Charts'
 import { DatePicker } from '../components/DatePicker'
 import { Modal } from '../components/Modal'
@@ -11,18 +11,22 @@ import { Busy, Empty, PageHead, dt, fmt, pct, signCls } from '../components/Layo
 const STATUS: Record<string, string> = {
   selected: '入选',
   filled: '成交',
-  enter: '新开',
+  pending: '待成交',
+  open: '开仓',
   exit: '清仓',
-  rebalance: '再平衡',
-  buy: '买入',
-  sell: '卖出',
-  hold: '持有',
+  add: '加仓',
+  reduce: '减仓',
+  hold: '不动',
+  buy: '开仓',
+  sell: '清仓',
   skipped_suspend: '停牌',
   skipped_limit_up: '涨停',
   skipped_limit_down: '跌停',
   skipped_missing: '无行情',
   skipped_untradeable: '不可交易',
 }
+
+type DayTab = 'plan' | 'picks' | 'trades' | 'holdings'
 
 function money(v: number | undefined | null, digits = 0) {
   if (v === undefined || v === null || Number.isNaN(v)) return '—'
@@ -31,7 +35,8 @@ function money(v: number | undefined | null, digits = 0) {
 }
 
 function statusTag(s: string) {
-  const cls = s === 'selected' || s === 'filled' ? 'green' : s.startsWith('skipped') ? 'amber' : 'gray'
+  if (!s) return null
+  const cls = s === 'selected' || s === 'filled' || s === 'enter' ? 'green' : s.startsWith('skipped') || s === 'pending' ? 'amber' : 'gray'
   return <span className={`tag ${cls}`}>{STATUS[s] ?? s}</span>
 }
 
@@ -172,7 +177,7 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
     if (!acc) return []
     return [...(acc.plans ?? [])].reverse().map((p) => ({
       value: p.signal_date,
-      label: p.status === 'pending' ? `${p.signal_date}（待成交 ${p.exec_at}）` : p.signal_date,
+      label: p.status === 'pending' ? `${p.signal_date}（待执行 ${p.exec_at}）` : `${p.signal_date} · ${p.exec_at}`,
     }))
   }, [acc])
 
@@ -332,7 +337,10 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
             <div className="card">
               <h3>
                 净值曲线
-                <span className="hint">红三角买入、绿三角卖出（换股日），点击查看当日明细</span>
+                <span className="hint">
+                  红三角买入、绿三角卖出（换股日），点击查看当日明细
+                  {navDays.length > 0 ? ` · 截至 ${navDays[navDays.length - 1].date}` : ''}
+                </span>
                 <span className="right">
                   <button type="button" className="btn xs" disabled={!dayKey} onClick={() => openInspect(dayKey)}>
                     当日明细
@@ -345,10 +353,10 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
 
           <div className="card">
             <h3>
-              每日选股
-              <span className="hint">信号日收盘打分，下一交易日 09:30 开盘成交</span>
+              交易计划
+              <span className="hint">信号日收盘打分，下一交易日开盘成交</span>
               <span className="right">
-                <Select value={dayKey} onChange={setDayKey} items={dayOpts} minWidth={180} size="sm" />
+                <Select value={dayKey} onChange={setDayKey} items={dayOpts} minWidth={220} size="sm" />
               </span>
             </h3>
             {!day && <Empty text="这一天没有记录" />}
@@ -368,8 +376,8 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
       )}
       {inspect && day && (
         <Modal
-          title={`当日明细 · ${day.exec_at || day.date}`}
-          subtitle={`信号日 ${day.date} · 净值 ${money(day.nav)}`}
+          title={`交易计划 · ${day.date}`}
+          subtitle={day.exec_at ? `计划执行时间 ${day.exec_at} · 净值 ${money(day.nav)}` : `净值 ${money(day.nav)}`}
           width={860}
           onClose={() => setInspect(false)}
           closeOnEscape={!kline}
@@ -468,6 +476,7 @@ type DayView = {
   date: string
   exec_at: string
   picks: PaperPick[]
+  intents: PaperIntent[]
   holdings: PaperPosition[]
   trades: PaperFill[]
   nav: number
@@ -480,16 +489,13 @@ function dayFromPlan(p: Paper, plan: PaperPlan): DayView {
   const snap = (p.snapshots ?? []).find((s) => s.date === execDay)
   const fills = (p.fills ?? []).filter((f) => f.plan_id === plan.id)
   const pending = plan.status === 'pending'
+  const intents = plan.intents ?? []
   return {
     pending,
     date: plan.signal_date,
     exec_at: plan.exec_at,
-    picks: (plan.intents ?? []).map((it) => ({
-      code: it.code,
-      score: it.score,
-      rank: it.rank,
-      status: it.reason || it.side,
-    })),
+    picks: plan.picks ?? [],
+    intents,
     holdings: pending ? p.book.positions ?? [] : snap?.holdings ?? [],
     trades: fills,
     nav: snap?.nav ?? p.book.cash,
@@ -498,132 +504,224 @@ function dayFromPlan(p: Paper, plan: PaperPlan): DayView {
   }
 }
 
+function intentFillSide(side: string): 'buy' | 'sell' | null {
+  if (side === 'open' || side === 'add' || side === 'buy') return 'buy'
+  if (side === 'exit' || side === 'reduce' || side === 'sell') return 'sell'
+  return null
+}
+
+function plannedTrades(day: DayView): PaperFill[] {
+  const out: PaperFill[] = []
+  for (const it of day.intents) {
+    const fillSide = intentFillSide(it.side)
+    if (!fillSide || !(it.shares > 0)) continue
+    out.push({
+      account_id: 0,
+      date: day.exec_at,
+      code: it.code,
+      name: it.name,
+      label: it.label,
+      side: fillSide,
+      shares: it.shares,
+      price: 0,
+      amount: 0,
+      fee: 0,
+      status: 'pending',
+    })
+  }
+  return out
+}
+
 function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarget) => void }) {
+  const [tab, setTab] = useState<DayTab>('plan')
+  const trades = day.pending ? plannedTrades(day) : day.trades ?? []
   return (
     <>
-      {day.pending && (
-        <div className="note info mb12">
-          <span>ℹ</span>
-          <div>
-            {day.date} 的选股待开盘成交
-            {day.exec_at ? `（${day.exec_at}）` : ''}。
-          </div>
-        </div>
-      )}
-      <PickTable title="入选" rows={day.picks} onOpen={onOpen} />
-      <h4 className="paper-h4">持仓</h4>
-      <div className="tbl-wrap mb12">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>股票</th>
-              <th className="num">股数</th>
-              <th className="num">买入价</th>
-              <th className="num">现价</th>
-              <th className="num">累计盈利</th>
-              <th className="num">市值</th>
-              <th className="num">权重</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(day.holdings ?? []).length === 0 && (
-              <tr>
-                <td colSpan={7} className="muted">
-                  空仓
-                </td>
-              </tr>
-            )}
-            {(day.holdings ?? []).map((h) => (
-              <tr key={h.code}>
-                <td className="name">
-                  <StockName row={h} onOpen={onOpen} />
-                </td>
-                <td className="num">{lots(h.shares)}</td>
-                <td className="num">{fmt(h.cost, 3)}</td>
-                <td className="num">{fmt(h.price, 3)}</td>
-                <td className={`num ${signCls(h.pnl)}`}>{money(h.pnl)}</td>
-                <td className="num">{money(h.value)}</td>
-                <td className="num">{pct(h.weight, 1)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="tabs-bar">
+        <button type="button" className={tab === 'plan' ? 'on' : ''} onClick={() => setTab('plan')}>
+          交易计划
+        </button>
+        <button type="button" className={tab === 'picks' ? 'on' : ''} onClick={() => setTab('picks')}>
+          每日选股
+        </button>
+        <button type="button" className={tab === 'trades' ? 'on' : ''} onClick={() => setTab('trades')}>
+          交易记录
+        </button>
+        <button type="button" className={tab === 'holdings' ? 'on' : ''} onClick={() => setTab('holdings')}>
+          每日持仓
+        </button>
       </div>
-      {(day.trades ?? []).length > 0 && (
-        <>
-          <h4 className="paper-h4">成交 {day.exec_at}</h4>
-          <div className="tbl-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th>方向</th>
-                  <th className="num">股数</th>
-                  <th className="num">价格</th>
-                  <th className="num">金额</th>
-                  <th className="num">费用</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(day.trades ?? []).map((tr, i) => (
-                  <tr key={i}>
-                    <td className="name">
-                      <StockName row={tr} onOpen={onOpen} />
-                    </td>
-                    <td>{tr.side === 'buy' ? '买' : '卖'}</td>
-                    <td className="num">{lots(tr.shares)}</td>
-                    <td className="num">{tr.price ? fmt(tr.price, 3) : '—'}</td>
-                    <td className="num">{tr.amount ? money(tr.amount) : '—'}</td>
-                    <td className="num">{tr.fee ? money(tr.fee, 2) : '—'}</td>
-                    <td>{statusTag(tr.status)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      {tab === 'plan' && <PlanTable rows={day.intents} onOpen={onOpen} />}
+      {tab === 'picks' && <PickTable rows={day.picks} onOpen={onOpen} />}
+      {tab === 'trades' && <TradeTable rows={trades} pending={!!day.pending} onOpen={onOpen} />}
+      {tab === 'holdings' && <HoldingTable rows={day.holdings ?? []} onOpen={onOpen} />}
     </>
   )
 }
 
-function PickTable({ title, rows, onOpen }: { title: string; rows: PaperPick[]; onOpen: (row: KLineTarget) => void }) {
+function PlanTable({ rows, onOpen }: { rows: PaperIntent[]; onOpen: (row: KLineTarget) => void }) {
   return (
-    <>
-      <h4 className="paper-h4">{title}</h4>
-      <div className="tbl-wrap mb12">
-        <table className="tbl">
-          <thead>
+    <div className="tbl-wrap">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>方向</th>
+            <th className="num">计划股数</th>
+            <th className="num">实际股数</th>
+            <th className="num">名次</th>
+            <th className="num">得分</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
             <tr>
-              <th className="num">名次</th>
-              <th>股票</th>
-              <th className="num">得分</th>
-              <th>状态</th>
+              <td colSpan={6} className="muted">
+                无交易计划
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={4} className="muted">
-                  无
-                </td>
-              </tr>
-            )}
-            {rows.map((r) => (
-              <tr key={r.code}>
-                <td className="num">{r.rank}</td>
-                <td className="name">
-                  <StockName row={r} onOpen={onOpen} />
-                </td>
-                <td className="num">{fmt(r.score, 4)}</td>
-                <td>{statusTag(r.status)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
+          )}
+          {rows.map((r) => (
+            <tr key={r.code}>
+              <td className="name">
+                <StockName row={r} onOpen={onOpen} />
+              </td>
+              <td>{STATUS[r.side] ?? r.side}</td>
+              <td className="num">{lots(r.shares)}</td>
+              <td className="num">{lots(r.actual_shares)}</td>
+              <td className="num">{r.rank || '—'}</td>
+              <td className="num">{fmt(r.score, 4)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function PickTable({ rows, onOpen }: { rows: PaperPick[]; onOpen: (row: KLineTarget) => void }) {
+  return (
+    <div className="tbl-wrap">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th className="num">名次</th>
+            <th>股票</th>
+            <th className="num">得分</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={3} className="muted">
+                无选股记录
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr key={r.code}>
+              <td className="num">{r.rank}</td>
+              <td className="name">
+                <StockName row={r} onOpen={onOpen} />
+              </td>
+              <td className="num">{fmt(r.score, 4)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function HoldingTable({ rows, onOpen }: { rows: PaperPosition[]; onOpen: (row: KLineTarget) => void }) {
+  return (
+    <div className="tbl-wrap">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th className="num">股数</th>
+            <th className="num">买入价</th>
+            <th className="num">现价</th>
+            <th className="num">累计盈利</th>
+            <th className="num">市值</th>
+            <th className="num">权重</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={7} className="muted">
+                空仓
+              </td>
+            </tr>
+          )}
+          {rows.map((h) => (
+            <tr key={h.code}>
+              <td className="name">
+                <StockName row={h} onOpen={onOpen} />
+              </td>
+              <td className="num">{lots(h.shares)}</td>
+              <td className="num">{fmt(h.cost, 3)}</td>
+              <td className="num">{fmt(h.price, 3)}</td>
+              <td className={`num ${signCls(h.pnl)}`}>{money(h.pnl)}</td>
+              <td className="num">{money(h.value)}</td>
+              <td className="num">{pct(h.weight, 1)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TradeTable({
+  rows,
+  pending,
+  onOpen,
+}: {
+  rows: PaperFill[]
+  pending?: boolean
+  onOpen: (row: KLineTarget) => void
+}) {
+  return (
+    <div className="tbl-wrap">
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>股票</th>
+            <th>方向</th>
+            <th className="num">股数</th>
+            <th className="num">价格</th>
+            <th className="num">金额</th>
+            <th className="num">费用</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={7} className="muted">
+                {pending ? '无调仓' : '无成交'}
+              </td>
+            </tr>
+          )}
+          {rows.map((tr, i) => (
+            <tr key={i}>
+              <td className="name">
+                <StockName row={tr} onOpen={onOpen} />
+              </td>
+              <td>{tr.side === 'buy' ? '买' : '卖'}</td>
+              <td className="num">{lots(tr.shares)}</td>
+              <td className="num">{tr.price ? fmt(tr.price, 3) : '—'}</td>
+              <td className="num">{tr.amount ? money(tr.amount) : '—'}</td>
+              <td className="num">{tr.fee ? money(tr.fee, 2) : '—'}</td>
+              <td>{statusTag(tr.status)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

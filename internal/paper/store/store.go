@@ -51,6 +51,13 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate paper schema: %w", err)
 	}
+	if _, err := db.Exec(`ALTER TABLE plan ADD COLUMN picks TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate paper picks: %w", err)
+		}
+	}
 	return &Store{db: db}, nil
 }
 
@@ -207,59 +214,85 @@ func (s *Store) InsertPlan(p matching.Plan) (int64, error) {
 	return s.InsertPlanTx(nil, p)
 }
 
+func marshalJSONList(v any) (string, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return "[]", nil
+	}
+	return string(raw), nil
+}
+
 func (s *Store) InsertPlanTx(tx *sql.Tx, p matching.Plan) (int64, error) {
-	raw, err := json.Marshal(p.Intents)
+	intents, err := marshalJSONList(p.Intents)
 	if err != nil {
 		return 0, err
 	}
-	if raw == nil {
-		raw = []byte("[]")
+	picks, err := marshalJSONList(p.Picks)
+	if err != nil {
+		return 0, err
 	}
 	status := p.Status
 	if status == "" {
 		status = "pending"
 	}
-	res, err := s.q(tx).Exec(`INSERT INTO plan (account_id, signal_date, exec_at, intents, status) VALUES (?,?,?,?,?)`,
-		p.AccountID, p.SignalDate, p.ExecAt, string(raw), status)
+	res, err := s.q(tx).Exec(`INSERT INTO plan (account_id, signal_date, exec_at, intents, picks, status) VALUES (?,?,?,?,?,?)`,
+		p.AccountID, p.SignalDate, p.ExecAt, intents, picks, status)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
+func scanPlan(id, accountID int64, signalDate, execAt, intents, picks, status string) matching.Plan {
+	p := matching.Plan{ID: id, AccountID: int(accountID), SignalDate: signalDate, ExecAt: execAt, Status: status}
+	if intents != "" {
+		_ = json.Unmarshal([]byte(intents), &p.Intents)
+	}
+	if picks != "" {
+		_ = json.Unmarshal([]byte(picks), &p.Picks)
+	}
+	return p
+}
+
 func (s *Store) GetPlan(id int64) (matching.Plan, error) {
-	var p matching.Plan
-	var raw string
-	err := s.db.QueryRow(`SELECT id, account_id, signal_date, exec_at, intents, status FROM plan WHERE id=?`, id).
-		Scan(&p.ID, &p.AccountID, &p.SignalDate, &p.ExecAt, &raw, &p.Status)
+	var accountID int64
+	var signalDate, execAt, intents, picks, status string
+	err := s.db.QueryRow(`SELECT id, account_id, signal_date, exec_at, intents, picks, status FROM plan WHERE id=?`, id).
+		Scan(&id, &accountID, &signalDate, &execAt, &intents, &picks, &status)
 	if err != nil {
 		return matching.Plan{}, err
 	}
-	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &p.Intents)
-	}
-	return p, nil
+	return scanPlan(id, accountID, signalDate, execAt, intents, picks, status), nil
 }
 
 func (s *Store) ListPlans(accountID int) ([]matching.Plan, error) {
-	rows, err := s.db.Query(`SELECT id, account_id, signal_date, exec_at, intents, status FROM plan WHERE account_id=? ORDER BY exec_at`, accountID)
+	rows, err := s.db.Query(`SELECT id, account_id, signal_date, exec_at, intents, picks, status FROM plan WHERE account_id=? ORDER BY exec_at`, accountID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []matching.Plan
 	for rows.Next() {
-		var p matching.Plan
-		var raw string
-		if err := rows.Scan(&p.ID, &p.AccountID, &p.SignalDate, &p.ExecAt, &raw, &p.Status); err != nil {
+		var id, accID int64
+		var signalDate, execAt, intents, picks, status string
+		if err := rows.Scan(&id, &accID, &signalDate, &execAt, &intents, &picks, &status); err != nil {
 			return nil, err
 		}
-		if raw != "" {
-			_ = json.Unmarshal([]byte(raw), &p.Intents)
-		}
-		out = append(out, p)
+		out = append(out, scanPlan(id, accID, signalDate, execAt, intents, picks, status))
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) UpdatePlanPicks(id int64, picks []matching.Pick) error {
+	raw, err := marshalJSONList(picks)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE plan SET picks=? WHERE id=?`, raw, id)
+	return err
 }
 
 func (s *Store) MarkPlanDone(id int64, intents []matching.Intent) (bool, error) {

@@ -13,6 +13,7 @@ import (
 
 	"factor-lab/internal/data"
 	"factor-lab/internal/paper/jobs"
+	"factor-lab/internal/paper/matching"
 
 	"github.com/riverqueue/river"
 )
@@ -35,8 +36,8 @@ func TestCreatePaperEnqueuesGenerateNotReplay(t *testing.T) {
 	if len(view.Plans) != 0 {
 		t.Fatalf("create must not write plans: %d", len(view.Plans))
 	}
-	if len(view.Snapshots) != 1 {
-		t.Fatalf("init snapshots %d", len(view.Snapshots))
+	if len(view.Snapshots) != 0 {
+		t.Fatalf("create must not write snapshot: %d", len(view.Snapshots))
 	}
 	res, err := srv.paperJobs.Client.JobList(context.Background(), river.NewJobListParams().Kinds(jobs.GenerateArgs{}.Kind()))
 	if err != nil {
@@ -51,6 +52,57 @@ func TestCreatePaperEnqueuesGenerateNotReplay(t *testing.T) {
 	}
 	if args.AccountID != view.Account.ID || args.SignalDate != view.Account.Config.Start {
 		t.Fatalf("args %+v start %s", args, view.Account.Config.Start)
+	}
+}
+
+func TestGetPaperBackfillsPicks(t *testing.T) {
+	srv, ts := newPaperFixture(t)
+	f := postFactor(t, ts, "rev5", `alpha = -1 * cs_rank(close / ts_delay(close, 5) - 1)`)
+	created := postPaper(t, ts, map[string]any{
+		"name": "rev5 实盘", "factor_id": f.ID, "top_n": 5, "capital": 100000,
+	}, http.StatusOK)
+	labels := srv.panel().DateLabels()
+	if len(labels) < 2 {
+		t.Fatal("panel too short")
+	}
+	pid, err := srv.paperJobs.Store.InsertPlan(matching.Plan{
+		AccountID:  created.Account.ID,
+		SignalDate: labels[5],
+		ExecAt:     labels[6] + " 09:30:00",
+		Status:     "pending",
+		Intents:    []matching.Intent{{Code: "S0", Side: matching.SideOpen, Shares: 100}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.Get(ts.URL + "/api/paper/" + strconv.Itoa(created.Account.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s", res.Status)
+	}
+	var got Paper
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	var plan matching.Plan
+	for _, p := range got.Plans {
+		if p.ID == pid {
+			plan = p
+			break
+		}
+	}
+	if len(plan.Picks) != 5 {
+		t.Fatalf("GET picks %d want 5: %+v", len(plan.Picks), plan.Picks)
+	}
+	stored, err := srv.paperJobs.Store.GetPlan(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Picks) != 5 {
+		t.Fatalf("stored picks %d", len(stored.Picks))
 	}
 }
 

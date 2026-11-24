@@ -11,10 +11,10 @@ type Position struct {
 	Label  string  `json:"label,omitempty"`
 	Shares float64 `json:"shares"`
 	Cost   float64 `json:"cost"`
-	Price  float64 `json:"-"`
-	Value  float64 `json:"-"`
-	Weight float64 `json:"-"`
-	PnL    float64 `json:"-"`
+	Price  float64 `json:"price,omitempty"`
+	Value  float64 `json:"value,omitempty"`
+	Weight float64 `json:"weight,omitempty"`
+	PnL    float64 `json:"pnl,omitempty"`
 }
 
 type Fill struct {
@@ -23,6 +23,8 @@ type Fill struct {
 	PlanID    int64   `json:"plan_id,omitempty"`
 	Date      string  `json:"date"`
 	Code      string  `json:"code"`
+	Name      string  `json:"name,omitempty"`
+	Label     string  `json:"label,omitempty"`
 	Side      string  `json:"side"`
 	Shares    float64 `json:"shares"`
 	Price     float64 `json:"price"`

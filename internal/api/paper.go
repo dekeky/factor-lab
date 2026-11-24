@@ -2,12 +2,14 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"factor-lab/internal/compose"
 	"factor-lab/internal/engine"
+	"factor-lab/internal/panel"
 	"factor-lab/internal/paper/account"
 	"factor-lab/internal/paper/jobs"
 	"factor-lab/internal/paper/ledger"
@@ -149,6 +151,8 @@ func (s *Server) handleGetPaper(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "模拟盘不存在")
 		return
 	}
+	s.backfillPlanPicks(&view)
+	s.decoratePaper(&view)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -221,8 +225,125 @@ func (s *Server) assemblePaper(id int, withFills bool) (Paper, error) {
 		}
 		view.Fills = fills
 	}
+	s.decoratePaper(&view)
 	return view, nil
 }
+
+func (s *Server) decoratePaper(view *Paper) {
+	p := s.panel()
+	if view == nil || p == nil {
+		return
+	}
+	idx := make(map[string]int, p.N())
+	for j, c := range p.Codes {
+		idx[c] = j
+	}
+	dateIdx := make(map[string]int, p.T())
+	for i, d := range p.Dates {
+		dateIdx[d.Format("2006-01-02")] = i
+	}
+	meta := func(code string) (string, string) {
+		j, ok := idx[code]
+		if !ok {
+			return "", code
+		}
+		return p.StockName(j), p.Label(j)
+	}
+	mark := func(date string, ps []ledger.Position, cash float64) {
+		di, ok := dateIdx[date]
+		nav := cash
+		for i := range ps {
+			ps[i].Name, ps[i].Label = meta(ps[i].Code)
+			j, has := idx[ps[i].Code]
+			if ok && has {
+				if px := panelClose(p, di, j); px > 0 {
+					ps[i].Price = px
+					ps[i].Value = ps[i].Shares * px
+					ps[i].PnL = (px - ps[i].Cost) * ps[i].Shares
+				}
+			}
+			nav += ps[i].Value
+		}
+		if nav > 0 {
+			for i := range ps {
+				ps[i].Weight = ps[i].Value / nav
+			}
+		}
+	}
+	mark(view.Book.LastSettled, view.Book.Positions, view.Book.Cash)
+	for i := range view.Snapshots {
+		mark(view.Snapshots[i].Date, view.Snapshots[i].Holdings, view.Snapshots[i].Cash)
+	}
+	for i := range view.Plans {
+		for j := range view.Plans[i].Intents {
+			view.Plans[i].Intents[j].Name, view.Plans[i].Intents[j].Label = meta(view.Plans[i].Intents[j].Code)
+		}
+		for j := range view.Plans[i].Picks {
+			view.Plans[i].Picks[j].Name, view.Plans[i].Picks[j].Label = meta(view.Plans[i].Picks[j].Code)
+		}
+	}
+	for i := range view.Fills {
+		view.Fills[i].Name, view.Fills[i].Label = meta(view.Fills[i].Code)
+	}
+}
+
+func (s *Server) backfillPlanPicks(view *Paper) {
+	if view == nil || s.paperJobs == nil || s.paperJobs.Store == nil {
+		return
+	}
+	need := false
+	for _, p := range view.Plans {
+		if len(p.Picks) == 0 {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return
+	}
+	pan := s.panel()
+	if pan == nil || pan.T() < 1 {
+		return
+	}
+	col, errs := engine.Run(view.Account.Expr, pan)
+	if len(errs) > 0 || col == nil {
+		return
+	}
+	topN := view.Account.Config.TopN
+	if topN < 1 {
+		topN = 10
+	}
+	for i := range view.Plans {
+		if len(view.Plans[i].Picks) > 0 {
+			continue
+		}
+		picks, err := matching.PicksOnDate(pan, col, view.Plans[i].SignalDate, topN)
+		if err != nil || len(picks) == 0 {
+			continue
+		}
+		if err := s.paperJobs.Store.UpdatePlanPicks(view.Plans[i].ID, picks); err != nil {
+			continue
+		}
+		view.Plans[i].Picks = picks
+	}
+}
+
+func panelClose(p *panel.Panel, i, j int) float64 {
+	n := p.N()
+	for _, name := range []string{"qfq_close", "close"} {
+		c, ok := p.Col(name)
+		if !ok {
+			continue
+		}
+		v := c[i*n+j]
+		if !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 {
+			return v
+		}
+	}
+	return 0
+}
+
+
 
 func (s *Server) uniquePaperName(name string) (string, error) {
 	accs, err := s.paperJobs.Store.ListAccounts()

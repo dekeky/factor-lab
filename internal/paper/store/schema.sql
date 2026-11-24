@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS plan (
     signal_date TEXT    NOT NULL,
     exec_at     TEXT    NOT NULL,
     intents     TEXT    NOT NULL,
+    picks       TEXT    NOT NULL DEFAULT '[]',
     status      TEXT    NOT NULL CHECK (status IN ('pending','done'))
 );
 

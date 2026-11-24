@@ -35,8 +35,8 @@ func TestOpenAccountEnqueuesGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snaps) != 1 || snaps[0].Date != "2023-12-31" || snaps[0].Cash != 10000 {
-		t.Fatalf("init snapshot %+v", snaps)
+	if len(snaps) != 0 {
+		t.Fatalf("open must not write snapshot: %+v", snaps)
 	}
 	plans, _ := env.st.ListPlans(acc.ID)
 	if len(plans) != 0 {
@@ -124,6 +124,10 @@ func TestGenerateEmptySignalDateErrors(t *testing.T) {
 	if len(plans) != 0 {
 		t.Fatal("must not write plan")
 	}
+	snaps, _ := env.st.ListSnapshots(acc.ID)
+	if len(snaps) != 0 {
+		t.Fatal("must not write snapshot")
+	}
 }
 
 func TestGenerateIncompleteSnoozes(t *testing.T) {
@@ -142,6 +146,10 @@ func TestGenerateIncompleteSnoozes(t *testing.T) {
 	plans, _ := env.st.ListPlans(acc.ID)
 	if len(plans) != 0 {
 		t.Fatal("incomplete must not write plan")
+	}
+	snaps, _ := env.st.ListSnapshots(acc.ID)
+	if len(snaps) != 0 {
+		t.Fatal("incomplete must not write snapshot")
 	}
 }
 
@@ -185,22 +193,32 @@ func TestGenerateSuccessInsertsPlanAndExecuteJob(t *testing.T) {
 	if len(plan.Intents) == 0 {
 		t.Fatal("empty intents")
 	}
+	if len(plan.Picks) != 1 || plan.Picks[0].Code != "A" || plan.Picks[0].Rank != 1 {
+		t.Fatalf("picks %+v", plan.Picks)
+	}
 	for _, in := range plan.Intents {
-		if in.ActualBuyShares != 0 || in.ActualSellShares != 0 {
+		if in.ActualShares != 0 {
 			t.Fatalf("actuals must be 0 %+v", in)
 		}
-		if in.BuyShares != 0 && int(in.BuyShares)%100 != 0 {
-			t.Fatalf("buy lots %+v", in)
+		if in.Shares != 0 && int(in.Shares)%100 != 0 {
+			t.Fatalf("lots %+v", in)
 		}
-		switch in.Reason {
-		case "", matching.ReasonEnter, matching.ReasonExit, matching.ReasonRebalance:
+		switch in.Side {
+		case matching.SideOpen, matching.SideExit, matching.SideAdd, matching.SideReduce, matching.SideHold:
 		default:
-			t.Fatalf("bad reason %q", in.Reason)
+			t.Fatalf("bad side %q", in.Side)
 		}
 	}
 	a, ok := findIntent(plan, "A")
-	if !ok || a.Side != "buy" || a.Reason != matching.ReasonEnter || a.BuyShares != 1000 {
+	if !ok || a.Side != matching.SideOpen || a.Shares != 1000 {
 		t.Fatalf("A %+v", a)
+	}
+	snaps, err := env.st.ListSnapshots(acc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 1 || snaps[0].Date != "2024-01-01" || snaps[0].Cash != 10000 || snaps[0].NAV != 10000 {
+		t.Fatalf("seed snapshot %+v", snaps)
 	}
 	jobs := listKind(t, env.client, ExecuteArgs{}.Kind())
 	if len(jobs) != 1 {
@@ -263,7 +281,7 @@ func TestExecuteInvalidExecAtErrors(t *testing.T) {
 	acc := mustOpen(t, env, "2024-01-01")
 	pid, err := env.st.InsertPlan(matching.Plan{
 		AccountID: acc.ID, SignalDate: "2024-01-01", ExecAt: "2024-01-02",
-		Status: "pending", Intents: []matching.Intent{{Code: "A", Side: "buy", BuyShares: 100}},
+		Status: "pending", Intents: []matching.Intent{{Code: "A", Side: matching.SideOpen, Shares: 100}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +306,7 @@ func TestExecuteMissingBarSnoozes(t *testing.T) {
 	acc := mustOpen(t, env, "2024-01-01")
 	pid, err := env.st.InsertPlan(matching.Plan{
 		AccountID: acc.ID, SignalDate: "2024-01-01", ExecAt: "2024-01-02 09:30:00",
-		Status: "pending", Intents: []matching.Intent{{Code: "A", Side: "buy", BuyShares: 100, Reason: matching.ReasonEnter}},
+		Status: "pending", Intents: []matching.Intent{{Code: "A", Side: matching.SideOpen, Shares: 100}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -305,7 +323,7 @@ func TestExecuteMissingBarSnoozes(t *testing.T) {
 		t.Fatal("must not write fill")
 	}
 	plan, _ := env.st.GetPlan(pid)
-	if plan.Status != "pending" || plan.Intents[0].ActualBuyShares != 0 {
+	if plan.Status != "pending" || plan.Intents[0].ActualShares != 0 {
 		t.Fatalf("%+v", plan)
 	}
 }
@@ -337,8 +355,8 @@ func TestExecuteSuccessWritesFillsAndNextGenerate(t *testing.T) {
 	}
 	orig := plan.Intents[0]
 	done := got.Intents[0]
-	if done.BuyShares != orig.BuyShares || done.SellShares != orig.SellShares || done.Reason != orig.Reason {
-		t.Fatalf("plan shares/reason mutated %+v vs %+v", orig, done)
+	if done.Shares != orig.Shares || done.Side != orig.Side {
+		t.Fatalf("plan shares/side mutated %+v vs %+v", orig, done)
 	}
 	fills, err := env.st.ListFills(acc.ID)
 	if err != nil || len(fills) == 0 {
@@ -357,7 +375,7 @@ func TestExecuteSuccessWritesFillsAndNextGenerate(t *testing.T) {
 				sell = f.Shares
 			}
 		}
-		if in.ActualBuyShares != buy || in.ActualSellShares != sell {
+		if in.ActualShares != buy+sell {
 			t.Fatalf("actuals %+v buy=%v sell=%v", in, buy, sell)
 		}
 	}
@@ -476,7 +494,7 @@ func TestExecuteSecondTimeNoOp(t *testing.T) {
 	if len(fills2) != len(fills1) {
 		t.Fatalf("fills %d -> %d", len(fills1), len(fills2))
 	}
-	if plan2.Intents[0].ActualBuyShares != plan1.Intents[0].ActualBuyShares {
+	if plan2.Intents[0].ActualShares != plan1.Intents[0].ActualShares {
 		t.Fatal("actuals changed")
 	}
 }

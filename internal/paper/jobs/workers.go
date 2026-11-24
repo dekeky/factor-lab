@@ -102,10 +102,6 @@ func OpenAccount(ctx context.Context, deps *Deps, acc account.Account) (account.
 	if acc.UpdatedAt.IsZero() {
 		acc.UpdatedAt = now
 	}
-	initDate, err := calendarMinusOne(start)
-	if err != nil {
-		return account.Account{}, err
-	}
 	at, err := shanghaiAt(start, "15:10:00")
 	if err != nil {
 		return account.Account{}, err
@@ -122,14 +118,6 @@ func OpenAccount(ctx context.Context, deps *Deps, acc account.Account) (account.
 		return account.Account{}, err
 	}
 	acc.ID = id
-	snap := ledger.Snapshot{
-		AccountID: id, Date: initDate,
-		Cash: cfg.Capital, NAV: cfg.Capital, Ret: 0,
-		Holdings: []ledger.Position{},
-	}
-	if err := deps.Store.InsertSnapshotTx(tx, snap); err != nil {
-		return account.Account{}, err
-	}
 	if _, err := deps.Client.InsertTx(ctx, tx, GenerateArgs{AccountID: id, SignalDate: start}, insertWhenDue(at)); err != nil {
 		return account.Account{}, err
 	}
@@ -177,10 +165,7 @@ func (w *GenerateWorker) Work(ctx context.Context, job *river.Job[GenerateArgs])
 	if err != nil {
 		return err
 	}
-	if book.LastSettled == "" && book.Cash == 0 && len(book.Positions) == 0 {
-		book.Cash = acc.Config.Capital
-	}
-	book.AccountID = acc.ID
+	book, seed := seedCash(acc, book)
 
 	plan, err := matching.Generate(slice, col, acc, book, args.SignalDate)
 	if err != nil {
@@ -208,8 +193,22 @@ func (w *GenerateWorker) Work(ctx context.Context, job *river.Job[GenerateArgs])
 	}
 	defer tx.Rollback()
 
+	if seed {
+		snap := ledger.Snapshot{
+			AccountID: acc.ID, Date: args.SignalDate,
+			Cash: book.Cash, NAV: book.Cash, Ret: 0,
+			Holdings: []ledger.Position{},
+		}
+		if err := w.Deps.Store.InsertSnapshotTx(tx, snap); err != nil && !store.IsConflict(err) {
+			return err
+		}
+	}
+
 	pid, err := w.Deps.Store.InsertPlanTx(tx, plan)
 	if store.IsConflict(err) {
+		if seed {
+			return tx.Commit()
+		}
 		return nil
 	}
 	if err != nil {
@@ -284,10 +283,7 @@ func (w *ExecuteWorker) Work(ctx context.Context, job *river.Job[ExecuteArgs]) e
 	if err != nil {
 		return err
 	}
-	if book.LastSettled == "" && book.Cash == 0 && len(book.Positions) == 0 {
-		book.Cash = acc.Config.Capital
-	}
-	book.AccountID = acc.ID
+	book, _ = seedCash(acc, book)
 
 	fills, intents, _, snap, err := matching.Execute(slice, plan, book, acc.Config, plan.ExecAt)
 	if err != nil {
@@ -376,12 +372,14 @@ func resolveStart(p *panel.Panel, start string) (string, error) {
 	return "", fmt.Errorf("起始日晚于面板最后一天")
 }
 
-func calendarMinusOne(ymd string) (string, error) {
-	t, err := time.Parse("2006-01-02", ymd)
-	if err != nil {
-		return "", fmt.Errorf("起始日不是 YYYY-MM-DD")
+func seedCash(acc account.Account, book ledger.Book) (ledger.Book, bool) {
+	if book.LastSettled != "" {
+		book.AccountID = acc.ID
+		return book, false
 	}
-	return t.AddDate(0, 0, -1).Format("2006-01-02"), nil
+	book.Cash = acc.Config.Capital
+	book.AccountID = acc.ID
+	return book, true
 }
 
 func shanghaiAt(ymd, hms string) (time.Time, error) {

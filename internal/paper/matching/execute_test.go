@@ -20,8 +20,8 @@ func TestExecuteSellsBeforeBuys(t *testing.T) {
 	plan := Plan{
 		SignalDate: "2024-01-01",
 		Intents: []Intent{
-			{Code: "B", Side: "sell", SellShares: 100, Reason: ReasonExit},
-			{Code: "A", Side: "buy", BuyShares: 100, Reason: ReasonEnter},
+			{Code: "B", Side: SideExit, Shares: 100},
+			{Code: "A", Side: SideOpen, Shares: 100},
 		},
 	}
 	book := ledger.Book{Cash: 0, Positions: []ledger.Position{{Code: "B", Shares: 100, Cost: 10}}}
@@ -39,8 +39,8 @@ func TestExecuteSellsBeforeBuys(t *testing.T) {
 		t.Fatalf("cash went negative %v", next.Cash)
 	}
 	a, _ := findIntent(Plan{Intents: intents}, "A")
-	if a.ActualBuyShares != 100 {
-		t.Fatalf("actual buy %v", a.ActualBuyShares)
+	if a.ActualShares != 100 {
+		t.Fatalf("actual buy %v", a.ActualShares)
 	}
 	if snap.Date != "2024-01-02" {
 		t.Fatalf("snap date %s", snap.Date)
@@ -54,13 +54,13 @@ func TestExecuteSkipLimitUp(t *testing.T) {
 		"raw_open": fill(T, N, 11), "up_limit": fill(T, N, 11), "down_limit": fill(T, N, 9),
 		"suspend": fill(T, N, math.NaN()),
 	})
-	plan := Plan{Intents: []Intent{{Code: "A", Side: "buy", BuyShares: 100, Reason: ReasonEnter}}}
+	plan := Plan{Intents: []Intent{{Code: "A", Side: SideOpen, Shares: 100}}}
 	_, intents, next, _, err := Execute(p, plan, ledger.Book{Cash: 10000}, account.Config{}, "2024-01-02 09:30:00")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a, _ := findIntent(Plan{Intents: intents}, "A")
-	if a.ActualBuyShares != 0 {
+	if a.ActualShares != 0 {
 		t.Fatalf("bought on limit up %+v", a)
 	}
 	if next.Cash != 10000 {
@@ -75,7 +75,7 @@ func TestExecuteBuyReducesBy100WhenCashShort(t *testing.T) {
 		"suspend": fill(T, N, math.NaN()), "up_limit": fill(T, N, math.NaN()), "down_limit": fill(T, N, math.NaN()),
 		"raw_open": fill(T, N, 10),
 	})
-	plan := Plan{Intents: []Intent{{Code: "A", Side: "buy", BuyShares: 1000, Reason: ReasonEnter}}}
+	plan := Plan{Intents: []Intent{{Code: "A", Side: SideOpen, Shares: 1000}}}
 	fills, intents, _, _, err := Execute(p, plan, ledger.Book{Cash: 9500}, account.Config{}, "2024-01-02 09:30:00")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestExecuteBuyReducesBy100WhenCashShort(t *testing.T) {
 		t.Fatalf("fill %+v", fills)
 	}
 	a, _ := findIntent(Plan{Intents: intents}, "A")
-	if a.ActualBuyShares != 900 || a.BuyShares != 1000 {
+	if a.ActualShares != 900 || a.Shares != 1000 {
 		t.Fatalf("intent %+v", a)
 	}
 }
@@ -96,14 +96,14 @@ func TestExecuteWritesActualShares(t *testing.T) {
 		"suspend": fill(T, N, math.NaN()), "up_limit": fill(T, N, math.NaN()), "down_limit": fill(T, N, math.NaN()),
 		"raw_open": fill(T, N, 10),
 	})
-	plan := Plan{Intents: []Intent{{Code: "A", Side: "buy", BuyShares: 100, Reason: ReasonEnter}}}
+	plan := Plan{Intents: []Intent{{Code: "A", Side: SideOpen, Shares: 100}}}
 	_, intents, _, snap, err := Execute(p, plan, ledger.Book{Cash: 10000}, account.Config{}, "2024-01-02 09:30:00")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a, _ := findIntent(Plan{Intents: intents}, "A")
-	if a.ActualBuyShares != 100 {
-		t.Fatalf("actual %v", a.ActualBuyShares)
+	if a.ActualShares != 100 {
+		t.Fatalf("actual %v", a.ActualShares)
 	}
 	if math.Abs(snap.NAV-(10000-1000)+0) < 0 && snap.NAV <= 0 {
 		t.Fatalf("nav %v", snap.NAV)
@@ -117,16 +117,16 @@ func TestExecuteDoesNotChangePlanSharesOrReason(t *testing.T) {
 		"suspend": fill(T, N, math.NaN()), "up_limit": fill(T, N, math.NaN()), "down_limit": fill(T, N, math.NaN()),
 		"raw_open": fill(T, N, 10),
 	})
-	plan := Plan{Intents: []Intent{{Code: "A", Side: "buy", BuyShares: 100, Reason: ReasonEnter}}}
+	plan := Plan{Intents: []Intent{{Code: "A", Side: SideOpen, Shares: 100}}}
 	orig := plan.Intents[0]
 	_, intents, _, _, err := Execute(p, plan, ledger.Book{Cash: 10000}, account.Config{}, "2024-01-02 09:30:00")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Intents[0].BuyShares != orig.BuyShares || plan.Intents[0].Reason != orig.Reason {
+	if plan.Intents[0].Shares != orig.Shares || plan.Intents[0].Side != orig.Side {
 		t.Fatal("plan mutated")
 	}
-	if intents[0].BuyShares != 100 || intents[0].Reason != ReasonEnter {
+	if intents[0].Shares != 100 || intents[0].Side != SideOpen {
 		t.Fatalf("returned %+v", intents[0])
 	}
 }

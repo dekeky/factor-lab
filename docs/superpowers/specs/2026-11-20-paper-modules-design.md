@@ -23,7 +23,7 @@ T+1 靠任务隔天衔接，不靠持仓字段：`generate` 用信号日收盘�
 
 实现下面三条能力。实现者按同一套顺序做，不要再合成 `Replay`。
 
-**开户：** 写入 `account.Account` 和初始化 `ledger.Snapshot`（日期 = `Start` 日历减一天，现金 = 本金，持仓空）→ 入队 `jobs.GenerateArgs{SignalDate: Start}`，`ScheduledAt` = 起始日 **15:10:00**。该时刻已过（回放、起始日在过去）则立刻跑。
+**开户：** 写入 `account.Account`（不写 snapshot）→ 入队 `jobs.GenerateArgs{SignalDate: Start}`，`ScheduledAt` = 起始日 **15:10:00**。该时刻已过（回放、起始日在过去）则立刻跑。没有快照时，生成任务用账户本金当现金写第一张 snapshot（日期 = 打分日）。
 
 **交易计划生成：** 消费 `GenerateArgs` → 按股票池和公式所需字段拉 K → 拉不到或不全则推迟 1 分钟重试 → 按冻结公式对 **`SignalDate` 当天收盘**打分 → 结合已有 `ledger.Book` 和**当日收盘价**写出一份 `matching.Plan`（每条 Intent 带买入/卖出股数；`ExecAt` = 信号日的下一交易日 09:30:00），并入队 `jobs.ExecuteArgs`。
 
@@ -76,16 +76,16 @@ type GenerateArgs struct {
 一次事务：
 
 1. 写入 `account`（冻结 `Expr`、TopN、本金、费率、起始日）。`Start` 空则取面板第一天；所填日期不在日期轴上则取轴上 `>=` 该日的第一根；晚于面板最后一天则开户失败。
-2. 写入初始化 `snapshot`：`Date` = 已写入的 `Start` **日历减一天**（可以不是交易日），现金 = 本金，持仓空，NAV = 本金，Ret = 0。这只是账本起点，**不是**打分日。
-3. 入队 `paper.generate`，参数 `GenerateArgs{AccountID, SignalDate: Start}`，`ScheduledAt` = `Start` 当天 **15:10:00**（Asia/Shanghai）。该时刻已过则立刻可跑。
+2. 入队 `paper.generate`，参数 `GenerateArgs{AccountID, SignalDate: Start}`，`ScheduledAt` = `Start` 当天 **15:10:00**（Asia/Shanghai）。该时刻已过则立刻可跑。
+3. **不写 snapshot。** 第一张快照由 generate 在没有账本时补：现金 = 账户本金，日期 = `SignalDate`。
 
 HTTP 立刻返回。
 
-开户失败则账户、初始化 snapshot、generate 任务都不存在。
+开户失败则账户、generate 任务都不存在。
 
 ### 3.2 交易计划生成 `paper.generate`
 
-入参 `GenerateArgs`。读 `Account`、最新 `ledger.Book`。写出 `matching.Plan`，入队 `ExecuteArgs`。不写 `fill` / `snapshot`。
+入参 `GenerateArgs`。读 `Account`、最新 `ledger.Book`。没有 snapshot 时现金 = 账户本金，并在同一事务写入第一张 snapshot（`Date=SignalDate`，空仓，NAV=本金）。写出 `matching.Plan`，入队 `ExecuteArgs`。不写 `fill`。已有 snapshot 时不准再插开户式空仓快照。
 
 ```go
 // GenerateArgs 出计划任务的参数。SignalDate 不准空：用那天收盘打分，成交下一交易日 09:30:00。
@@ -115,19 +115,16 @@ type Book struct {
     LastSettled string     // 账算到哪一天，等于最新 Snapshot.Date；没有快照则空
 }
 
-// Intent 计划里的一只目标或待清仓股票。留下的持仓也要写进来（hold），带打分、排名、买卖股数和原因。
-// 计划股数和原因在 Generate 用信号日收盘算死；Execute 只按 BuyShares / SellShares 成交，不再现场等权。
-// 实际股数生成时为 0，成交后写回同一条 Intent，计划行与 Fill 同一事务更新。不准改原因。
+// Intent 计划里的一只目标或待清仓股票。留下的持仓也要写进来。
+// 计划股数在 Generate 用信号日收盘算死；Execute 只按 Side + Shares 成交，不再现场等权。
+// 实际股数生成时为 0，成交后写回同一条 Intent，计划行与 Fill 同一事务更新。不准改 Side / Shares。
 type Intent struct {
-    Code             string  // 股票代码
-    Side             string  // buy 新开 | sell 清掉 | hold 仍在目标集合（可能加减仓）
-    BuyShares        float64 // 计划买入股数。无买入为 0。必须是 100 的整数倍
-    SellShares       float64 // 计划卖出股数。无卖出为 0。清仓=当前持仓（零股也全卖）。其余必须是 100 的整数倍
-    ActualBuyShares  float64 // 实际买入股数。生成时为 0；execute 成交后更新；没买到仍为 0
-    ActualSellShares float64 // 实际卖出股数。生成时为 0；execute 成交后更新；没卖出仍为 0
-    Reason           string  // 买入或卖出原因。无调仓为空。enter=空位补位新开；exit=排名跌出阈值清仓；rebalance=权重偏离目标超过 3% 加减仓。方向看 Side / 股数字段
-    Score            float64 // 打分日的因子分数；没有分数则 NaN
-    Rank             int     // 当天截面排名，1 最好；没有分数则 0
+    Code         string  // 股票代码
+    Side         string  // open 开仓 | exit 清仓 | add 加仓 | reduce 减仓 | hold 不动
+    Shares       float64 // 计划股数。hold 为 0。清仓=当前持仓（零股也全卖）。其余必须是 100 的整数倍
+    ActualShares float64 // 实际成交股数。生成时为 0；execute 成交后更新；没成交仍为 0
+    Score        float64 // 打分日的因子分数；没有分数则 NaN
+    Rank         int     // 当天截面排名，1 最好；没有分数则 0
 }
 
 // Plan 一天一份的交易计划。执行时间就是成交时间，开盘价撮合。
@@ -136,7 +133,7 @@ type Plan struct {
     AccountID  int      // 哪户
     SignalDate string   // 用哪天的收盘分数选出这批股票 YYYY-MM-DD。等于 GenerateArgs.SignalDate
     ExecAt     string   // 成交时刻 YYYY-MM-DD HH:MM:SS，精确到秒，Asia/Shanghai，不准空。= 信号日下一交易日 09:30:00。空或解析失败则 execute 报错
-    Intents    []Intent // buy / sell / hold，含计划股数和买卖原因；成交后带实际股数。停牌涨跌停缺价也可以出现在这里
+    Intents    []Intent // open / exit / add / reduce / hold，含计划股数；成交后带实际股数。停牌涨跌停缺价也可以出现在这里
     Status     string   // pending 还没成交；done 成交过了，不能再跑
 }
 
@@ -146,7 +143,7 @@ type ExecuteArgs struct {
     PlanID    int64 `json:"plan_id"`    // 成交哪一份计划
 } // Kind: paper.execute  Unique: 同一份计划不能入队两条成交任务
 
-// Generate 按分数、现有持仓和信号日收盘写出一份计划（Intents 含买卖股数 + SignalDate），不碰成交、不改账。ExecAt 由 worker 在 INSERT 前填。
+// Generate 按分数、现有持仓和信号日收盘写出一份计划（Intents 含 Side + Shares + SignalDate），不碰成交、不改账。ExecAt 由 worker 在 INSERT 前填。
 func Generate(p *panel.Panel, factor panel.Col, acc account.Account, book ledger.Book, signalDate string) (Plan, error)
 ```
 
@@ -163,16 +160,16 @@ Worker 按序：
    - 日期轴上能看到打分日的**下一交易日**（用来写 `ExecAt`）。下一根只从日期轴认，那天的开收盘、停牌、涨跌停一律不看。
    看不到打分日、或看不到下一交易日，就算没齐。单只股票信号日缺收盘不挡出计划，该条 Intent 买卖股数为 0。
 4. **求值用到哪段行情。** 用现成 `panel.Slice`（`to=打分日`）得到**本次调用的副本**（或只取打分日那一行截面），再对冻结 `Expr` 求值。打分日之后的 K **不准**进入公式。**不准**把截断结果写回进程内存面板。求值必须用打分日那一行，不准默认用全局面板最后一根。
-5. 读最新账本（无 snapshot 则现金=本金、持仓空）。开户已经写了初始化 snapshot，正常走最新那一行。
+5. 读最新账本。无 snapshot：现金=账户本金、持仓空，准备在事务里写第一张 snapshot（日期=打分日）。
 6. `matching.Generate`：用账户的 `TopN` 和 `RebalanceThreshold`（现 Buffer）写计划。按分数排序（有分的都排，不管停牌涨跌停缺价）：
-   - 持仓内股票排序掉落至 RebalanceThreshold 后，添加至全部卖出计划。`Reason=exit`。
-   - 根据卖出数量，按排序补位新的排名靠前的股票进来。`Reason=enter`。
-   - 持仓股票+待买入的新股票，一起计算权重，权重不均衡，偏移超过 3% 时，重新 rebalance，过高的卖出，过低的买入，添加到买入和卖出计划。`Reason=rebalance`。
-   无调仓则 `Reason` 必须空。只准用 `enter` / `exit` / `rebalance`。成交失败原因写在 Fill.Status，不准写进 `Reason`。
+   - 持仓内股票排序掉落至 RebalanceThreshold 后，`Side=exit` 清仓，`Shares`=当前持仓。
+   - 根据卖出腾出的空位，按排序补位新的排名靠前的股票，`Side=open` 开仓。
+   - 留下的持仓 + 待开仓，一起算等权。权重偏离目标超过 3%：过高 `Side=reduce` 减仓，过低 `Side=add` 加仓；取整后股数为 0 则仍 `hold`。
+   无调仓 `Side=hold`，`Shares=0`。成交失败写在 Fill.Status，不准另开原因字段。
    算买入股数时预留费率和滑点：分母用 `px × (1+SlippageBps/1e4) × (1+Cost)`，再向下取整到 100 股。卖出股数不因滑点变少。
-7. **一笔事务：** worker 把 `Plan.ExecAt` 写成「打分日下一交易日 `09:30:00`」（不准空）；`INSERT plan`；`InsertTx` `paper.execute`，参数 `ExecuteArgs{AccountID, PlanID}`，`ScheduledAt` = 解析后的 `ExecAt`。该时刻已过则马上跑；还没到就等到这一秒。成交日还没有 K 则 execute 自己推迟 1 分钟。拉 K 用 `ExecAt` 的日期部分。同一 `SignalDate` 已有计划（成交日 unique 冲突）→ 视为已完成，不插第二行、不重复入队 execute。
+7. **一笔事务：** 若本轮是无 snapshot 的首次：`INSERT snapshot`（日期=`SignalDate`，现金=本金，持仓空，NAV=本金，Ret=0）。worker 把 `Plan.ExecAt` 写成「打分日下一交易日 `09:30:00`」（不准空）；`INSERT plan`；`InsertTx` `paper.execute`，参数 `ExecuteArgs{AccountID, PlanID}`，`ScheduledAt` = 解析后的 `ExecAt`。该时刻已过则马上跑；还没到就等到这一秒。成交日还没有 K 则 execute 自己推迟 1 分钟。拉 K 用 `ExecAt` 的日期部分。同一 `SignalDate` 已有计划（成交日 unique 冲突）→ 视为已完成，不插第二行、不重复入队 execute；若本轮补过空仓 snapshot 则仍提交该 snapshot。
 
-生成 worker 不准成交、不准写 fill/snapshot。
+生成 worker 不准成交、不准写 fill。除「账户尚无 snapshot」外不准写 snapshot。
 
 ### 3.3 交易计划执行 `paper.execute`
 
@@ -214,7 +211,7 @@ type Fill struct {
     Status        string  // filled 成交 | skipped_suspend 停牌 | skipped_limit_up 开盘涨停买不进 | skipped_limit_down 开盘跌停卖不出 | skipped_untradeable 没价或不能成交
 }
 
-// Snapshot 某一天收盘时账户长什么样。开户那份日期是起始日日历减一天；成交写入的日期是成交日。
+// Snapshot 某一天收盘时账户长什么样。第一张由 generate 在无快照时写入（日期=打分日，现金=本金）；之后由 execute 按成交日写入。
 type Snapshot struct {
     AccountID int        // 哪户
     Date      string     // 这是哪天收盘的快照 YYYY-MM-DD
@@ -241,7 +238,7 @@ type GenerateArgs struct {
 // Apply 把成交记到账上，返回成交后的现金和持仓。不写库。
 func Apply(book Book, fills []Fill) (Book, error)
 
-// Execute 按计划里已经写好的股数成交，并填好每条 Intent 的 ActualBuyShares / ActualSellShares（不写库）。停牌涨跌停缺价只跳过该笔，不另找股票，不重算等权。
+// Execute 按计划里已经写好的股数成交，并填好每条 Intent 的 ActualShares（不写库）。停牌涨跌停缺价只跳过该笔，不另找股票，不重算等权。
 func Execute(p *panel.Panel, plan Plan, book ledger.Book, cfg account.Config, execAt string) (fills []ledger.Fill, intents []Intent, next ledger.Book, snap ledger.Snapshot, err error)
 ```
 
@@ -256,15 +253,15 @@ Worker 按序：
 5. 读当前账户基础信息：最新 snapshot 拼出的 `Book`（现金、持仓）。没有 snapshot 则现金=本金、持仓空。
 6. `matching.Execute`（先卖后买，数量只用 Intent 上的股数，**不准**再用开盘价重算等权）：
    - 成交价 `px` = `qfq_open`→`open`，再套滑点：买 `px×(1+SlippageBps/1e4)`，卖 `px×(1−SlippageBps/1e4)`。收盘计价仍 `qfq_close`→`close`。
-   - **先卖：** 所有 `SellShares>0` 的 Intent（`sell` 清仓和 `hold` 减仓）。能卖则按 `min(SellShares, 当前持仓)` 成交；停牌 / 开盘跌停 / 缺价 → fill `skipped_*`、股数 0，这只票留在账上，不换别的股票顶上。`SellShares=0` 不写卖出 fill。
-   - **后买：** 所有 `BuyShares>0` 的 Intent（`buy` 新开和 `hold` 加仓）。停牌 / 开盘涨停 / 缺价 → fill `skipped_*`、股数 0，不换股票。
-   - **现金不够：** 买入占用现金 = `股数 × 成交价 × (1+Cost)`。成交价已含滑点（上一条的买价），展开即 `股数 × 开盘价 × (1+SlippageBps/1e4) × (1+Cost)`。从计划 `BuyShares` 起，若现金不够，**股数减 100** 再算，循环直到现金够或股数 < 100。减完仍买不起 1 手 → fill `skipped_untradeable`、股数 0。减过手但仍买到的 → fill `filled`，`Shares` 为实际买到的整手数×100（可以小于计划）。`Fill.Amount` = 股数×含滑点成交价；`Fill.Fee` = Amount×Cost；`Fill.Slippage` = 股数×开盘价×SlippageBps/1e4。
-   - 每条 Intent 成交后立刻写回实际股数（只改内存副本，入库见下一步）：`ActualBuyShares` = 该股买入 Fill 的 `Shares`（无买入 fill 或 skipped 则为 0）；`ActualSellShares` 同理。不准改 `BuyShares`/`SellShares`/`Reason`。`BuyShares=SellShares=0` 的 hold：不写 fill，实际股数保持 0。
+   - **先卖：** 所有 `Side` 为 `exit`（清仓）或 `reduce`（减仓）且 `Shares>0` 的 Intent。能卖则按 `min(Shares, 当前持仓)` 成交；停牌 / 开盘跌停 / 缺价 → fill `skipped_*`、股数 0，这只票留在账上，不换别的股票顶上。`hold` 不写 fill。
+   - **后买：** 所有 `Side` 为 `open`（开仓）或 `add`（加仓）且 `Shares>0` 的 Intent。停牌 / 开盘涨停 / 缺价 → fill `skipped_*`、股数 0，不换股票。
+   - **现金不够：** 买入占用现金 = `股数 × 成交价 × (1+Cost)`。成交价已含滑点（上一条的买价），展开即 `股数 × 开盘价 × (1+SlippageBps/1e4) × (1+Cost)`。从计划 `Shares` 起，若现金不够，**股数减 100** 再算，循环直到现金够或股数 < 100。减完仍买不起 1 手 → fill `skipped_untradeable`、股数 0。减过手但仍买到的 → fill `filled`，`Shares` 为实际买到的整手数×100（可以小于计划）。`Fill.Amount` = 股数×含滑点成交价；`Fill.Fee` = Amount×Cost；`Fill.Slippage` = 股数×开盘价×SlippageBps/1e4。成交 Fill 的 `Side` 仍是 `buy`/`sell`。
+   - 每条 Intent 成交后立刻写回实际股数（只改内存副本，入库见下一步）：`ActualShares` = 该股 Fill 的 `Shares`（无 fill 或 skipped 则为 0）。不准改 `Side`/`Shares`。`hold`：不写 fill，实际股数保持 0。
    - 同一份 Execute 里先处理全部卖，再处理全部买，不会把本笔刚买的票再卖掉。
 7. **一笔事务（必须同一 tx）：**
    - `UPDATE plan SET status='done', intents=? WHERE id=? AND status='pending'`。`intents` 为已填实际股数的完整 JSON。0 行 → 空提交，不准覆盖已成交计划上的实际股数。
    - `INSERT fill…`（含 skipped）。
-   - `INSERT snapshot`（该日现金、持仓、NAV、Ret）。该日已有 snapshot → 整笔当已完成，空提交（幂等；初始化 snapshot 写的是 Start 日历减一天，不会和成交日撞）。
+   - `INSERT snapshot`（该日现金、持仓、NAV、Ret）。该日已有 snapshot → 整笔当已完成，空提交（幂等；generate 补的第一张日期是打分日，成交日是下一交易日，不撞）。
    - `InsertTx` `paper.generate`，参数 `GenerateArgs{AccountID, SignalDate:成交日}`（成交日 = `ExecAt` 的日期），`ScheduledAt` = 成交日 **15:10:00**。已过则马上跑。开户那条是 `SignalDate=Start`，第一笔成交日是 Start 的下一交易日，Unique 不撞。写出的下一份 `Plan.ExecAt` = 该信号日的下一交易日 `09:30:00`。
 
 失败整笔回滚，计划仍 pending，River 按失败重试。执行 worker 不准调用 `Generate` 领域函数。
@@ -272,8 +269,8 @@ Worker 按序：
 ### 3.4 这三条之间怎么接
 
 ```text
-开户 → snapshot(Start 日历-1天) + generate(SignalDate=Start) @ Start 15:10
-     → 第一份计划 ExecAt=Start 的下一交易日 09:30:00
+开户 → generate(SignalDate=Start) @ Start 15:10
+     → 无 snapshot 则 snapshot(Start，现金=本金) + 第一份计划 ExecAt=Start 的下一交易日 09:30:00
      → 成交记账（Fill.Date = ExecAt；Snapshot.Date = 成交日）
      → generate(SignalDate=成交日) @ 成交日 15:10:00
      → 下一份计划 ExecAt=再下一交易日 09:30:00
@@ -308,29 +305,29 @@ type Paper struct {
 }
 ```
 
-净值横轴用 `Snapshot.Date`（初始化点 + 每个成交日）。待成交看 pending `Plan.ExecAt`。删掉 `fill_date`。回放中展示未完成任务（`river_job`）。改 UI 后走 Go 的 `web/dist`。
+净值横轴用 `Snapshot.Date`（generate 补的第一张打分日空仓点 + 每个成交日）。待成交看 pending `Plan.ExecAt`。删掉 `fill_date`。回放中展示未完成任务（`river_job`）。改 UI 后走 Go 的 `web/dist`。
 
 ### 3.7 测试
 
 用 River 在进程内入队并消费，不要用 HTTP 当撮合驱动。
 
-- 开户：一条 generate（`signal_date=Start`）排在 `Start` 15:10；一份初始化 snapshot（日期 = Start 日历减一天）；不写 plan / fill / 起始日当天 snapshot。
-- 第一份计划 `signal_date=Start`，`exec_at=Start 的下一交易日 09:30:00`；execute 排在这一秒（已过则马上成交）；成交后才有成交日 snapshot。
+- 开户：一条 generate（`signal_date=Start`）排在 `Start` 15:10；不写 snapshot / plan / fill。
+- generate 成功且当时无 snapshot：同一事务写入 snapshot（日期=`SignalDate`，现金=本金，空仓）+ 第一份计划 `signal_date=Start`，`exec_at=Start 的下一交易日 09:30:00`；execute 排在这一秒（已过则马上成交）。
 - 开户回滚：无 account、无 snapshot、无 generate。
 - generate 的 `signal_date` 为空：报错，不写计划，不准改用 snapshot 日期。
 - generate 数据不全：无新 plan 行，任务处于 snoozed。
-- generate 成功：一行 plan（含 hold/buy/sell Intent，留下的持仓有 Score、Rank，buy/sell/hold 带 BuyShares、SellShares 和 Reason；买入股数为 100 的整数倍，由信号日收盘、费率、滑点向下取整；ActualBuyShares/ActualSellShares 均为 0），一条 execute(plan_id) 排在 `exec_at` 这一秒。
-- generate 原因：跌出阈值清仓 `exit`；空位补位 `enter`；权重偏移超 3% 加减仓 `rebalance`；无调仓则空。
-- generate 数量：等权按信号日收盘估 NAV；缺收盘的 buy/hold 股数为 0 仍写入；sell 股数=当前持仓。
+- generate 成功：一行 plan（含 open/exit/add/reduce/hold Intent，留下的持仓有 Score、Rank 和 Shares；开仓/加仓股数为 100 的整数倍，由信号日收盘、费率、滑点向下取整；ActualShares 均为 0），一条 execute(plan_id) 排在 `exec_at` 这一秒。
+- generate 方向：跌出阈值 `exit` 清仓；空位补位 `open` 开仓；权重偏移超 3% 加仓 `add` / 减仓 `reduce`（取整后股数为 0 则仍 `hold`）；无调仓 `hold` 不动。
+- generate 数量：等权按信号日收盘估 NAV；缺收盘的 open/hold 股数为 0 仍写入；exit 股数=当前持仓。
 - generate 求值不得改写进程内存面板；本次求值用到的最后一天 = 打分日；打分日之后的收盘不进公式。
 - 第二次 generate 同一信号日：不插第二行计划。
 - execute 缺成交日 K：无 fill，plan 仍 pending，实际股数仍为 0。
-- execute 成功：fill + snapshot + plan.done 同一事务，plan.intents 写回 ActualBuyShares/ActualSellShares（与对应 Fill.Shares 一致；skipped 为 0；BuyShares/SellShares/Reason 不变）；再入队 generate(成交日) @ 15:10。
+- execute 成功：fill + snapshot + plan.done 同一事务，plan.intents 写回 ActualShares（与对应 Fill.Shares 一致；skipped 为 0；Side/Shares 不变）；再入队 generate(成交日) @ 15:10。
 - 该 generate 能写出**第二份**计划（`exec_at`=再下一交易日 09:30:00），不和开户任务 Unique 撞车。
 - 第二次 execute：资金不变，不追加 fill，计划上的实际股数不变。
 - 停牌/涨跌停/缺价：计划里可以有这些股票和计划股数；执行记 skipped，Actual*=0，不改该笔资金，不另找股票、不重算数量。
-- execute 按计划股数成交：不因开盘价重做等权。买入占用现金含滑点和费率；不够则股数每次减 100 再试，买到的写入 Fill 和 Intent.ActualBuyShares（可小于 BuyShares）；减到不足 1 手则 skipped_untradeable，ActualBuyShares=0。
-- RebalanceThreshold / 先卖后买 / 费用 / 滑点 与现口径一致；hold 加减仓的股数以计划为准。
+- execute 按计划股数成交：不因开盘价重做等权。买入占用现金含滑点和费率；不够则股数每次减 100 再试，买到的写入 Fill 和 Intent.ActualShares（可小于 Shares）；减到不足 1 手则 skipped_untradeable，ActualShares=0。
+- RebalanceThreshold / 先卖后买 / 费用 / 滑点 与现口径一致；加仓/减仓的股数以计划为准。
 
 ---
 

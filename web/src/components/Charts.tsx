@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { EChartsOption, SeriesOption } from 'echarts'
 import { Chart } from './Chart'
 import { cssVar, useTheme } from '../lib/theme'
+import { ymdFromAxis } from '../lib/ymd'
 import type { Metrics, PaperFill, PaperSnapshot } from '../types'
 
 // 转成百分数数值：null/NaN 一律返回 null（ECharts 认作断点）。
@@ -262,7 +263,7 @@ export function PaperNavChart({
         formatter: (raw) => {
           const list = Array.isArray(raw) ? raw : [raw]
           const first = list[0] as { axisValue?: string | number; value?: unknown }
-          const fill = nearestDay(dates, ymdHint(first?.axisValue ?? first?.value))
+          const fill = nearestDay(dates, ymdFromAxis(first?.axisValue ?? first?.value))
           const row = byFill.get(fill)
           const navPt = list.find((p) => (p as { seriesName?: string }).seriesName === '净值') as { value?: unknown } | undefined
           const navVal = Array.isArray(navPt?.value) ? Number(navPt.value[1]) : Number.NaN
@@ -280,7 +281,14 @@ export function PaperNavChart({
       },
       legend: { data: legend },
       grid: { left: 64, right: 20, bottom: 30, top: 40 },
-      xAxis: { type: 'time', axisLabel: { hideOverlap: true } },
+      xAxis: {
+        type: 'time',
+        axisLabel: {
+          hideOverlap: true,
+          showMaxLabel: true,
+          formatter: (v: number) => ymdFromAxis(v),
+        },
+      },
       yAxis: { type: 'value', name: '净值', scale: true },
       dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 4 }],
       series,
@@ -302,14 +310,3 @@ export function PaperNavChart({
   )
 }
 
-function ymdHint(v: unknown): string {
-  if (typeof v === 'string') return v.slice(0, 10)
-  if (Array.isArray(v) && v.length) return ymdHint(v[0])
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    const d = new Date(v)
-    if (!Number.isNaN(d.getTime())) {
-      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
-    }
-  }
-  return ''
-}

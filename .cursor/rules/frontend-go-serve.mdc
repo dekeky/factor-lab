@@ -1,21 +1,15 @@
 ---
-description: After frontend changes, rebuild dist and serve it with the Go backend (not Vite).
+description: After code changes, rebuild the frontend with npm run build. Do not start the Go backend.
 alwaysApply: true
 ---
 
-# Frontend is served by Go
+# Rebuild frontend after code changes
 
-Do not treat `npm run dev` / Vite `:5173` as the way to show frontend changes to the user.
+Do not treat `npm run dev` / Vite `:5173` as the way to show frontend changes.
 
-After changing anything under `web/src` (or other files that affect the UI):
+After finishing code changes:
 
-1. Rebuild: `npm run build` in `web/` (writes `web/dist`).
-2. Run the Go server with `-web web/dist`, for example:
+1. Rebuild the frontend: `npm run build` in `web/` (writes `web/dist`).
+2. Do **not** start or restart the Go backend (`go run ./cmd/server`, etc.). The user runs the server themselves.
 
-```text
-go run ./cmd/server -addr 127.0.0.1:8080 -web web/dist ...
-```
-
-Match the data-source flags the user is already using (do not switch synthetic/tushare just to preview UI). If `:8080` is occupied by an older `cmd/server`, stop it and restart so it picks up the new `web/dist`.
-
-Verify in the browser at the Go address (e.g. `http://127.0.0.1:8080`), not Vite.
+If `:8080` is already serving an older `web/dist`, the user will restart it when they want the new build.

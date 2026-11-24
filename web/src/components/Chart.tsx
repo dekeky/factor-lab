@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts'
 import { cssVar } from '../lib/theme'
+import { ymdFromAxis } from '../lib/ymd'
 
 function paint(inst: echarts.ECharts, option: echarts.EChartsOption) {
   const ink = cssVar('--ink', '#f5f5f5')
@@ -28,17 +29,6 @@ function paint(inst: echarts.ECharts, option: echarts.EChartsOption) {
 //     这里用 requestAnimationFrame 轮询等待尺寸就绪再初始化。
 //  2. 页面重新可见（visibilitychange）或窗口尺寸变化时强制 resize。
 //  3. option 可能早于实例创建到达，用 ref 暂存，实例创建后立即应用。
-function ymdFromAxis(x: unknown): string {
-  if (typeof x === 'string') return x.slice(0, 10)
-  if (typeof x === 'number' && Number.isFinite(x)) {
-    const d = new Date(x)
-    if (!Number.isNaN(d.getTime())) {
-      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
-    }
-  }
-  return ''
-}
-
 export function useChart(option: echarts.EChartsOption | null, onAxisClick?: (day: string) => void) {
   const ref = useRef<HTMLDivElement>(null)
   const instRef = useRef<echarts.ECharts | null>(null)

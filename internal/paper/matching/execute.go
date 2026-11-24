@@ -31,20 +31,19 @@ func Execute(p *panel.Panel, plan Plan, book ledger.Book, cfg account.Config, ex
 	}
 
 	for i := range intents {
-		sh := intents[i].SellShares
-		if sh <= 0 {
+		if !intents[i].selling() {
 			continue
 		}
 		code := intents[i].Code
 		have := pos[code]
-		want := sh
+		want := intents[i].Shares
 		if have < want {
 			want = have
 		}
 		f := tradeFill(p, idx, execAt, plan, intents[i], "sell", want, cfg)
 		fills = append(fills, f)
 		if f.Status == "filled" {
-			intents[i].ActualSellShares = f.Shares
+			intents[i].ActualShares = f.Shares
 			pos[code] = have - f.Shares
 		}
 	}
@@ -55,14 +54,13 @@ func Execute(p *panel.Panel, plan Plan, book ledger.Book, cfg account.Config, ex
 	}
 
 	for i := range intents {
-		sh := intents[i].BuyShares
-		if sh <= 0 {
+		if !intents[i].buying() {
 			continue
 		}
-		f := buyFill(p, idx, execAt, plan, intents[i], sh, cashBook.Cash, cfg)
+		f := buyFill(p, idx, execAt, plan, intents[i], intents[i].Shares, cashBook.Cash, cfg)
 		fills = append(fills, f)
 		if f.Status == "filled" {
-			intents[i].ActualBuyShares = f.Shares
+			intents[i].ActualShares = f.Shares
 			cashBook, err = ledger.Apply(cashBook, []ledger.Fill{f})
 			if err != nil {
 				return nil, nil, ledger.Book{}, ledger.Snapshot{}, err
@@ -273,6 +271,8 @@ func snapshotOf(p *panel.Panel, i int, book ledger.Book, day string) ledger.Snap
 	for k := range hold {
 		j := codeIndex(p, hold[k].Code)
 		if j >= 0 {
+			hold[k].Name = p.StockName(j)
+			hold[k].Label = p.Label(j)
 			if px, ok := markPx(p, i, j); ok {
 				hold[k].Price = px
 				hold[k].Value = hold[k].Shares * px

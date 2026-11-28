@@ -43,7 +43,7 @@ func main() {
 		dataMode  = flag.String("data", "tushare", "数据源: tushare（默认）| csv")
 		csvPath   = flag.String("csv", "", "CSV 路径（data=csv 时必填）")
 		tsToken   = flag.String("tushare-token", os.Getenv("TUSHARE_TOKEN"), "Tushare Pro token（也可设环境变量 TUSHARE_TOKEN，或在界面「设置」里填写）")
-		tsIndex   = flag.String("index", "000300.SH", "指数代码（成分股票池）")
+		tsIndex   = flag.String("index", data.AllMarket, "启动股票池（ALL=全市场最近5年；指数代码则按成分切片）")
 		tsTopN    = flag.Int("topn", 0, "成分取前 N 只（0 = 全部成分）")
 		tsStart   = flag.String("start", "", "起始日期 YYYYMMDD（空 = 接口默认区间）")
 		tsEnd     = flag.String("end", "", "结束日期 YYYYMMDD")
@@ -176,6 +176,9 @@ func main() {
 	if ts, ok := src.(*data.TushareSource); ok && ts.IndexCode != "" {
 		stockPool = ts.IndexCode
 	}
+	if stockPool == "" {
+		stockPool = data.AllMarket
+	}
 	paperDB := ""
 	if *storePath != "" {
 		paperDB = filepath.Join(filepath.Dir(*storePath), "paper.db")
@@ -190,6 +193,14 @@ func main() {
 		SettingsPath: settingsPath,
 		PaperDB:      paperDB,
 		PaperWorkers: true,
+		OpenDates: func() []string {
+			dates, err := data.ReadOpenDates(dataDir)
+			if err != nil {
+				slog.Warn("读交易日历失败", "err", err)
+				return nil
+			}
+			return dates
+		},
 		// 热加载：重新走一遍数据源加载，成功后原子替换面板（不中断在读的请求）
 		Reload: func(ctx context.Context) (*panel.Panel, error) {
 			np, err := src.Load(ctx)

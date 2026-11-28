@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -64,6 +65,8 @@ func NewEinoLLM(ctx context.Context, cfg EinoConfig) (*EinoLLM, error) {
 }
 
 func (e *EinoLLM) Name() string { return e.name }
+
+func (e *EinoLLM) ChatModel() model.BaseChatModel { return e.model }
 
 func (e *EinoLLM) Chat(ctx context.Context, system, user string) (string, error) {
 	msgs := []*schema.Message{

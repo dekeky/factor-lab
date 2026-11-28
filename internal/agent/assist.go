@@ -74,7 +74,7 @@ const (
 	AssistModeCombo  = "combo"
 )
 
-func assistSystemPrompt(p *panel.Panel) string {
+func assistSystemPrompt(p *panel.Panel, catalogInPrompt bool) string {
 	var sb strings.Builder
 	sb.WriteString(`你是 A 股量化因子研究助手，正在与用户对话式编写因子。
 用户可能是量化新手：回复要用平实的中文解释思路；涉及术语时顺带一句话解释。
@@ -84,20 +84,21 @@ DSL 规则（必须严格遵守）：
 - ts_ 前缀算子沿单只股票时间轴滚动，窗口长度必须显式给出（1~512 的整数）。
 - cs_ 前缀算子在每个交易日的横截面上计算。
 - 算术运算 + - * /；比较返回 0/1；if(cond, a, b) 做条件选择。
-- 只能使用下方列出的字段与算子，不得臆造。
+- 只能使用工具返回的字段与算子，不得臆造。写表达式前先调用 list_fields 与 list_ops（一次即完整目录）；提交前用 check_expr 自检。
 
 输出格式：严格 JSON（不要 markdown 围栏），` + assistJSONFormat + `
 expr 的要求：完整可独立运行（包含全部中间变量与赋值行，换行用 \n）；若用户只是提问、没有要求表达式，则 expr 给空字符串。
 修改请求：基于「当前编辑器表达式」改，不要丢掉用户已有的中间变量。`)
 
-	sb.WriteString("\n\n可用字段（面板列）：\n")
-	sb.WriteString(strings.Join(p.Fields(), ", "))
-
-	sb.WriteString("\n\n可用算子：\n")
-	for name, sig := range ops.Sigs() {
-		sb.WriteString(fmt.Sprintf("- %s/%d", name, sig.MinArgs))
+	if catalogInPrompt && p != nil {
+		sb.WriteString("\n\n可用字段（面板列）：\n")
+		sb.WriteString(strings.Join(p.Fields(), ", "))
+		sb.WriteString("\n\n可用算子：\n")
+		for name, sig := range ops.Sigs() {
+			sb.WriteString(fmt.Sprintf("- %s/%d", name, sig.MinArgs))
+		}
+		sb.WriteString("\n\n字段语义：close 为后复权收盘价；pct_chg 为日收益率；vol 成交量；amount 成交额；turnover_rate / turnover_rate_f 换手率(%)；volume_ratio 量比；pe / pe_ttm / pb / ps / ps_ttm 估值(倍)；dv_ratio / dv_ttm 股息率(%)；total_share / float_share / free_share 股本(万股)；total_mv / circ_mv 市值(万元)；limit_status 收盘涨跌状态(0–6)；roe 为 ROE（PIT 口径，百分数）。")
 	}
-	sb.WriteString("\n\n字段语义：close 为后复权收盘价；pct_chg 为日收益率；vol 成交量；amount 成交额；turnover_rate / turnover_rate_f 换手率(%)；volume_ratio 量比；pe / pe_ttm / pb / ps / ps_ttm 估值(倍)；dv_ratio / dv_ttm 股息率(%)；total_share / float_share / free_share 股本(万股)；total_mv / circ_mv 市值(万元)；limit_status 收盘涨跌状态(0–6)；roe 为 ROE（PIT 口径，百分数）。")
 	return sb.String()
 }
 
@@ -127,12 +128,12 @@ func parseAssist(raw string) (*assistOut, error) {
 	return &out, nil
 }
 
-func comboSystemPrompt(factors []FactorRef) string {
+func comboSystemPrompt(factors []FactorRef, catalogInPrompt bool) string {
 	var sb strings.Builder
 	sb.WriteString(`你是 A 股量化因子组合助手。任务是从现有因子库里挑选因子，做成线性组合，而不是写新的因子表达式。
 
 规则：
-- 只能使用下方列出的因子 id，禁止发明因子、禁止输出 DSL / expr。
+- 只能使用 list_factors 返回的因子 id，禁止发明因子、禁止输出 DSL / expr。挑选前先调用 list_factors（一次即完整目录）；提交前用 check_combo 自检。
 - 至少 2 个、建议 3～5 个经济含义互补、低相关的因子。
 - 不可用的因子不能选。
 - method 只能是 equal（等权）或 manual（自定义权重，weight>0）。
@@ -141,22 +142,24 @@ func comboSystemPrompt(factors []FactorRef) string {
 
 输出格式：严格 JSON（不要 markdown 围栏），` + comboJSONFormat)
 
-	sb.WriteString("\n\n因子库：\n")
-	if len(factors) == 0 {
-		sb.WriteString("（空）\n")
-	}
-	for _, f := range factors {
-		avail := "可用"
-		if !f.Available {
-			avail = "不可用"
+	if catalogInPrompt {
+		sb.WriteString("\n\n因子库：\n")
+		if len(factors) == 0 {
+			sb.WriteString("（空）\n")
 		}
-		line := fmt.Sprintf("id=%d %s（%s）%s", f.ID, f.Name, f.Category, avail)
-		if f.RankIC != 0 || f.ICIR != 0 {
-			line += fmt.Sprintf(" RankIC %.3f ICIR %.2f", f.RankIC, f.ICIR)
+		for _, f := range factors {
+			avail := "可用"
+			if !f.Available {
+				avail = "不可用"
+			}
+			line := fmt.Sprintf("id=%d %s（%s）%s", f.ID, f.Name, f.Category, avail)
+			if f.RankIC != 0 || f.ICIR != 0 {
+				line += fmt.Sprintf(" RankIC %.3f ICIR %.2f", f.RankIC, f.ICIR)
+			}
+			sb.WriteString("- ")
+			sb.WriteString(line)
+			sb.WriteByte('\n')
 		}
-		sb.WriteString("- ")
-		sb.WriteString(line)
-		sb.WriteByte('\n')
 	}
 	return sb.String()
 }

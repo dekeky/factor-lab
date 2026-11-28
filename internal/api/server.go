@@ -135,7 +135,7 @@ type Combo struct {
 // Options 是服务的运行期配置。
 type Options struct {
 	DataSource  string           // 数据源标识（如 tushare:000300.SH）
-	StockPool   string           // 股票池标识（如 000300.SH，供界面参数区展示）
+	StockPool   string           // 股票池标识（ALL = 全市场，或 000300.SH 等指数）
 	Report      *data.LoadReport // 数据质量摘要（可选）
 	APIToken    string           // 访问令牌；空 = 不鉴权
 	CORSOrigins []string         // 允许跨域的来源（空 = 同源专用，不下发 CORS 头）
@@ -152,6 +152,8 @@ type Options struct {
 	PaperDB string
 	// PaperWorkers 为 true 时启动 River 消费 paper.generate / paper.execute。
 	PaperWorkers bool
+	// OpenDates 已公布的开市日（YYYY-MM-DD）。空则模拟盘退回面板日期轴。
+	OpenDates func() []string
 }
 
 // Server 持有全部运行时依赖。
@@ -299,7 +301,7 @@ func (s *Server) initPaper(opt Options) error {
 	if strings.Contains(strings.ToLower(opt.DataSource), "csv") {
 		reload = nil
 	}
-	deps := &jobs.Deps{Store: st, Panel: s.panel, Reload: reload}
+	deps := &jobs.Deps{Store: st, Panel: s.panel, Reload: reload, OpenDates: opt.OpenDates}
 	client, err := jobs.NewClient(st.DB(), deps)
 	if err != nil {
 		st.Close()
@@ -698,7 +700,8 @@ func (s *Server) clearUniverseCache() {
 // universePanel 返回指定指数的成分面板。与启动股票池相同则复用当前面板；否则懒加载并缓存。
 func (s *Server) universePanel(ctx context.Context, index string) (*panel.Panel, error) {
 	index = data.CanonicalIndex(index)
-	if index == "" || index == data.CanonicalIndex(s.Opt.StockPool) {
+	pool := data.CanonicalIndex(s.Opt.StockPool)
+	if index == "" || index == data.AllMarket || index == pool {
 		return s.panel(), nil
 	}
 	if s.Opt.LoadUniverse == nil {

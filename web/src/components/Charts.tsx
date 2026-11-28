@@ -174,22 +174,6 @@ function filledOn(fills: PaperFill[] | undefined, day: string): PaperFill[] {
   return (fills ?? []).filter((f) => f.status === 'filled' && f.shares > 0 && fillDay(f) === day)
 }
 
-function nearestDay(dates: string[], day: string): string {
-  if (dates.includes(day)) return day
-  const t = Date.parse(day)
-  if (!Number.isFinite(t) || dates.length === 0) return day
-  let best = dates[0]
-  let bestDiff = Math.abs(Date.parse(dates[0]) - t)
-  for (const d of dates) {
-    const diff = Math.abs(Date.parse(d) - t)
-    if (diff < bestDiff) {
-      bestDiff = diff
-      best = d
-    }
-  }
-  return best
-}
-
 function moneyAxis(v: number): string {
   return v.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 }
@@ -207,7 +191,7 @@ export function PaperNavChart({
 }) {
   const theme = useTheme()
   const clickable = Boolean(onInspectDay)
-  const { option, dates } = useMemo(() => {
+  const { option } = useMemo(() => {
     const dates = snapshots.map((d) => d.date)
     const nav = snapshots.map((d) => d.nav)
     const byFill = new Map<string, { buys: number; sells: number }>()
@@ -262,10 +246,9 @@ export function PaperNavChart({
         trigger: 'axis',
         formatter: (raw) => {
           const list = Array.isArray(raw) ? raw : [raw]
-          const first = list[0] as { axisValue?: string | number; value?: unknown }
-          const fill = nearestDay(dates, ymdFromAxis(first?.axisValue ?? first?.value))
-          const row = byFill.get(fill)
           const navPt = list.find((p) => (p as { seriesName?: string }).seriesName === '净值') as { value?: unknown } | undefined
+          const fill = ymdFromAxis(Array.isArray(navPt?.value) ? navPt.value[0] : navPt?.value)
+          const row = byFill.get(fill)
           const navVal = Array.isArray(navPt?.value) ? Number(navPt.value[1]) : Number.NaN
           const lines = [`<b>${fill}</b>`]
           if (Number.isFinite(navVal)) lines.push(`净值 ${moneyAxis(navVal)}`)
@@ -293,19 +276,13 @@ export function PaperNavChart({
       dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 4 }],
       series,
     }
-    return { option, dates }
+    return { option }
   }, [snapshots, fills, capital, clickable, theme])
   return (
     <Chart
       option={option}
       clickable={clickable}
-      onAxisClick={
-        onInspectDay
-          ? (day) => {
-              onInspectDay(nearestDay(dates, day))
-            }
-          : undefined
-      }
+      onAxisClick={onInspectDay}
     />
   )
 }

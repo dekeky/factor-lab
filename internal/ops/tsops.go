@@ -106,9 +106,11 @@ func pearson(xs, ys []float64) float64 {
 }
 
 func init() {
-	// ---- 时序算子（沿单只股票的时间轴滚动；最后一个参数是窗口长度常数） ----
+	ts := func(sig, desc, example, tip string) Doc {
+		return Doc{Category: "时序", Signature: sig, Description: desc, Example: example, Tip: tip}
+	}
 
-	reg("ts_delay", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_delay", 2, 2, []int{1}, ts("ts_delay(x, window)", "取当前观测向前 window 个交易日的值。", "ts_delay(close, 5)", "“n 天前是多少”。和今天的值相除或相减，就能算出这段时间的变化。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		n := int(consts[1])
 		T, N := p.T(), p.N()
@@ -125,7 +127,7 @@ func init() {
 		return out
 	})
 
-	reg("ts_delta", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_delta", 2, 2, []int{1}, ts("ts_delta(x, window)", "当前值减去 window 个交易日前的值。", "ts_delta(close, 5)", "“比 n 天前多了多少”，等价于 x - ts_delay(x, n)。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		n := int(consts[1])
 		T, N := p.T(), p.N()
@@ -142,7 +144,7 @@ func init() {
 		return out
 	})
 
-	reg("ts_sum", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_sum", 2, 2, []int{1}, ts("ts_sum(x, window)", "最近 window 个交易日的滚动求和，忽略缺失值。", "ts_sum(pct_chg, 20)", "把最近 n 天的值加起来，例如最近 20 天的累计涨跌幅。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsApply(p, cols[0], int(consts[1]), func(vals []float64, _, _ int) float64 {
 			if len(vals) == 0 {
 				return math.NaN()
@@ -155,19 +157,19 @@ func init() {
 		})
 	})
 
-	reg("ts_mean", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_mean", 2, 2, []int{1}, ts("ts_mean(x, window)", "最近 window 个交易日的滚动均值，忽略缺失值。", "ts_mean(close, 20)", "最近 n 天的平均值，也就是常说的“n 日均线”。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsApply(p, cols[0], int(consts[1]), func(vals []float64, _, _ int) float64 {
 			return mean(vals)
 		})
 	})
 
-	reg("ts_std_dev", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_std_dev", 2, 2, []int{1}, ts("ts_std_dev(x, window)", "最近 window 个交易日的样本标准差。", "ts_std_dev(pct_chg, 20)", "最近 n 天波动有多大。数值越大说明越不稳定，常用来衡量风险。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsApply(p, cols[0], int(consts[1]), func(vals []float64, _, _ int) float64 {
 			return sampleStd(vals)
 		})
 	})
 
-	reg("ts_max", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_max", 2, 2, []int{1}, ts("ts_max(x, window)", "最近 window 个交易日的最大值。", "ts_max(high, 20)", "最近 n 天里的最高点，例如 ts_max(high, 20) 就是 20 日最高价。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsApply(p, cols[0], int(consts[1]), func(vals []float64, _, _ int) float64 {
 			if len(vals) == 0 {
 				return math.NaN()
@@ -182,7 +184,7 @@ func init() {
 		})
 	})
 
-	reg("ts_min", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_min", 2, 2, []int{1}, ts("ts_min(x, window)", "最近 window 个交易日的最小值。", "ts_min(low, 20)", "最近 n 天里的最低点，例如 ts_min(low, 20) 就是 20 日最低价。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsApply(p, cols[0], int(consts[1]), func(vals []float64, _, _ int) float64 {
 			if len(vals) == 0 {
 				return math.NaN()
@@ -197,7 +199,7 @@ func init() {
 		})
 	})
 
-	reg("ts_arg_max", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_arg_max", 2, 2, []int{1}, ts("ts_arg_max(x, window)", "窗口最大值的位置；最旧观测为 0。", "ts_arg_max(close, 10)", "最高点出现在窗口里的第几天：0 表示最早那天，window-1 表示今天。数值越大，高点离今天越近。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		n := int(consts[1])
 		T, N := p.T(), p.N()
@@ -230,7 +232,7 @@ func init() {
 		return out
 	})
 
-	reg("ts_rank", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_rank", 2, 2, []int{1}, ts("ts_rank(x, window)", "当前值在自身滚动窗口内的升序百分位，范围 0~1。", "ts_rank(close, 20)", "今天的值在自己最近 n 天里排第几：0 是最低，1 是最高。用来判断“相对自己的历史算高还是低”。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		return tsApply(p, x, int(consts[1]), func(vals []float64, i, j int) float64 {
 			cur := x[i*p.N()+j] // 当前值必须取 x[i] 本身（NaN 时直接无效）
@@ -251,7 +253,7 @@ func init() {
 		})
 	})
 
-	reg("ts_zscore", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_zscore", 2, 2, []int{1}, ts("ts_zscore(x, window)", "当前值相对滚动窗口均值和样本标准差的标准分。", "ts_zscore(pct_chg, 20)", "今天的值偏离自己近期平均水平多少个标准差。大于 2 或小于 -2 通常算明显异常。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		return tsApply(p, x, int(consts[1]), func(vals []float64, i, j int) float64 {
 			cur := x[i*p.N()+j]
@@ -269,7 +271,7 @@ func init() {
 		})
 	})
 
-	reg("ts_decay_linear", 2, 2, []int{1}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_decay_linear", 2, 2, []int{1}, ts("ts_decay_linear(x, window)", "线性衰减加权均值，越新的观测权重越高。", "ts_decay_linear(close, 10)", "一种“越近越重要”的平均值。常用来平滑信号、减少频繁换股。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		x := cols[0]
 		n := int(consts[1])
 		T, N := p.T(), p.N()
@@ -303,11 +305,11 @@ func init() {
 		return out
 	})
 
-	reg("ts_corr", 3, 3, []int{2}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_corr", 3, 3, []int{2}, ts("ts_corr(x, y, window)", "两个序列在滚动窗口内的皮尔逊相关系数。", "ts_corr(close, vol, 20)", "两个指标最近 n 天是否同涨同跌：接近 1 表示同向，接近 -1 表示反向，接近 0 表示没关系。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsPairs(p, cols[0], cols[1], int(consts[2]), pearson)
 	})
 
-	reg("ts_cov", 3, 3, []int{2}, func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
+	reg("ts_cov", 3, 3, []int{2}, ts("ts_cov(x, y, window)", "两个序列在滚动窗口内的样本协方差。", "ts_cov(close, vol, 20)", "和相关系数类似，但数值大小会受单位影响。多数情况下优先用 ts_corr。"), func(p *panel.Panel, cols []panel.Col, consts []float64) panel.Col {
 		return tsPairs(p, cols[0], cols[1], int(consts[2]), func(xs, ys []float64) float64 {
 			if len(xs) < 2 {
 				return math.NaN()

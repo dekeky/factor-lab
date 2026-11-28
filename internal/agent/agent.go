@@ -1,9 +1,10 @@
 // Package agent 实现 AI 助手的模型接入与对话式因子编写。
 //
 // 组成：
-//   - llm.go 的 LLM 抽象与 eino 实现（OpenAI 协议兼容端点）；
+//   - eino.go 的 LLM 抽象与 eino ChatModel（OpenAI 协议兼容端点）；
 //   - settings.go 的模型配置（界面「设置」维护，保存即热生效）；
-//   - assist.go 的对话式辅助（产出候选表达式，经引擎静态校验）。
+//   - chatmodel.go 的 ChatModelAgent（字段/算子/因子库作为工具，一次返回完整目录）；
+//   - assist.go 的对话式辅助（产出候选表达式或组合，经引擎静态校验）。
 //
 // 纪律：提议/裁决分离 —— LLM 只产出思路与表达式草稿；校验与评价
 // 由引擎硬编码执行，LLM 无法看到或修改评价口径；模型未配置时

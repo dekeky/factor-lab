@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"factor-lab/internal/compose"
+	"factor-lab/internal/data"
 	"factor-lab/internal/engine"
 	"factor-lab/internal/panel"
 	"factor-lab/internal/paper/account"
@@ -16,9 +17,7 @@ import (
 	"factor-lab/internal/paper/matching"
 )
 
-var hiddenPanelFields = map[string]bool{
-	"raw_close": true, "raw_open": true, "qfq_open": true, "qfq_close": true, "suspend": true, "up_limit": true, "down_limit": true,
-}
+var hiddenPanelFields = data.HiddenFields
 
 type paperReq struct {
 	Name               string  `json:"name"`
@@ -342,8 +341,6 @@ func panelClose(p *panel.Panel, i, j int) float64 {
 	}
 	return 0
 }
-
-
 
 func (s *Server) uniquePaperName(name string) (string, error) {
 	accs, err := s.paperJobs.Store.ListAccounts()

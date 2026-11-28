@@ -88,6 +88,35 @@ func TestPanelForRejectsSwitchWithoutLoader(t *testing.T) {
 	}
 }
 
+func TestPanelForAllMarketLoadsCSI300(t *testing.T) {
+	p := testPanel(t, "000001.SZ", "600000.SH", "000002.SZ")
+	csi := testPanel(t, "000001.SZ", "600000.SH")
+	loads := 0
+	s, err := New(p, nil, "", "", Options{
+		StockPool: "ALL",
+		LoadUniverse: func(ctx context.Context, index string) (*panel.Panel, error) {
+			loads++
+			if index != "000300.SH" {
+				t.Fatalf("unexpected index %s", index)
+			}
+			return csi, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.panelFor(context.Background(), evalConfig{Universe: "000300.SH", Horizon: 1, Groups: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.N() != 2 {
+		t.Fatalf("全市场面板上选沪深300应切到成分，得到 %d", got.N())
+	}
+	if loads != 1 {
+		t.Fatalf("loads %d", loads)
+	}
+}
+
 func TestPanelForCSI300Alias(t *testing.T) {
 	p := testPanel(t)
 	s, err := New(p, nil, "", "", Options{

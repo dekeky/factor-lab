@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import type { Combo, Factor, Meta, Paper, PaperFill, PaperIntent, PaperPlan, PaperPick, PaperPosition } from '../types'
+import type { Combo, Factor, Meta, Paper, PaperFill, PaperIntent, PaperPick, PaperPosition } from '../types'
 import { PaperNavChart } from '../components/Charts'
 import { DatePicker } from '../components/DatePicker'
 import { Modal } from '../components/Modal'
@@ -104,9 +104,16 @@ function paperMaxDD(p: Paper) {
   return dd
 }
 
-function planByKey(p: Paper, key: string): PaperPlan | undefined {
-  const plans = p.plans ?? []
-  return plans.find((x) => x.signal_date === key) || plans.find((x) => (x.exec_at || '').slice(0, 10) === key)
+function ymd(s: string | undefined): string {
+  return (s || '').slice(0, 10)
+}
+
+function fillDays(p: Paper): number {
+  const days = new Set<string>()
+  for (const f of p.fills ?? []) {
+    if (f.status === 'filled' && f.shares > 0) days.add(ymd(f.date))
+  }
+  return days.size
 }
 
 export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | null }) {
@@ -114,25 +121,16 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
   const [listReady, setListReady] = useState(false)
   const [acc, setAcc] = useState<Paper | null>(null)
   const [sel, setSel] = useState<number | null>(null)
-  const [dayKey, setDayKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
   const [kline, setKline] = useState<KLineTarget | null>(null)
-  const [inspect, setInspect] = useState(false)
+  const [inspectKey, setInspectKey] = useState('')
 
   const loadList = async () => {
     const rows = await api.papers()
     setList(rows)
     return rows
-  }
-
-  const pickDayKey = (a: Paper) => {
-    const plans = a.plans ?? []
-    const pending = plans.find((x) => x.status === 'pending')
-    const last = plans[plans.length - 1]
-    const snaps = a.snapshots ?? []
-    return pending?.signal_date || last?.signal_date || snaps[snaps.length - 1]?.date || ''
   }
 
   const open = async (id: number) => {
@@ -142,7 +140,6 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
     try {
       const a = await api.paper(id)
       setAcc(a)
-      setDayKey(pickDayKey(a))
       await loadList()
     } catch (e) {
       setErr((e as Error).message)
@@ -156,8 +153,7 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
   const close = () => {
     setAcc(null)
     setSel(null)
-    setDayKey('')
-    setInspect(false)
+    setInspectKey('')
   }
 
   useEffect(() => {
@@ -166,20 +162,9 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
       .finally(() => setListReady(true))
   }, [])
 
-  const day = useMemo(() => {
-    if (!acc) return null
-    const plan = planByKey(acc, dayKey)
-    if (!plan) return null
-    return dayFromPlan(acc, plan)
-  }, [acc, dayKey])
-
-  const dayOpts = useMemo(() => {
-    if (!acc) return []
-    return [...(acc.plans ?? [])].reverse().map((p) => ({
-      value: p.signal_date,
-      label: p.status === 'pending' ? `${p.signal_date}（待执行 ${p.exec_at}）` : `${p.signal_date} · ${p.exec_at}`,
-    }))
-  }, [acc])
+  const latestKey = acc?.snapshots?.length ? acc.snapshots[acc.snapshots.length - 1].date : ''
+  const latestDay = useMemo(() => (acc && latestKey ? dayFromSnapshot(acc, latestKey) : null), [acc, latestKey])
+  const inspectDay = useMemo(() => (acc && inspectKey ? dayFromSnapshot(acc, inspectKey) : null), [acc, inspectKey])
 
   async function onCreate(body: { name: string; factor_id?: number; combo_id?: number; top_n: number; buffer: number; capital: number; cost: number; start: string }) {
     setBusy(true)
@@ -189,7 +174,6 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
       setCreating(false)
       setAcc(a)
       setSel(a.account.id)
-      setDayKey(pickDayKey(a))
       await loadList()
     } catch (e) {
       setErr((e as Error).message)
@@ -235,9 +219,7 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
 
   const openInspect = (date: string) => {
     if (!date || !acc) return
-    const plan = planByKey(acc, date)
-    setDayKey(plan?.signal_date || date)
-    setInspect(true)
+    setInspectKey(date)
   }
 
   const browsing = sel == null
@@ -313,7 +295,7 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
               <div className="lbl">累计盈利</div>
               <div className={`num ${signCls(paperReturn(acc))}`}>{money(paperNav(acc) - acc.account.config.capital)}</div>
               <div className="foot">
-                {pct(paperReturn(acc), 2)} · {(acc.plans ?? []).filter((x) => x.status === 'done').length} 个成交日
+                {pct(paperReturn(acc), 2)} · {fillDays(acc)} 个成交日
               </div>
             </div>
             <div className="kpi">
@@ -342,7 +324,7 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
                   {navDays.length > 0 ? ` · 截至 ${navDays[navDays.length - 1].date}` : ''}
                 </span>
                 <span className="right">
-                  <button type="button" className="btn xs" disabled={!dayKey} onClick={() => openInspect(dayKey)}>
+                  <button type="button" className="btn xs" disabled={!latestKey} onClick={() => openInspect(latestKey)}>
                     当日明细
                   </button>
                 </span>
@@ -353,14 +335,14 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
 
           <div className="card">
             <h3>
-              交易计划
-              <span className="hint">信号日收盘打分，下一交易日开盘成交</span>
-              <span className="right">
-                <Select value={dayKey} onChange={setDayKey} items={dayOpts} minWidth={220} size="sm" />
+              当日明细
+              <span className="hint">
+                {latestKey ? `${latestKey} · ` : ''}
+                收盘出选股和计划，下一交易日开盘成交；持仓与成交以当天账本为准
               </span>
             </h3>
-            {!day && <Empty text="这一天没有记录" />}
-            {day && <PaperDayDetail day={day} onOpen={setKline} />}
+            {!latestDay && <Empty text="这一天没有记录" />}
+            {latestDay && <PaperDayDetail day={latestDay} onOpen={setKline} />}
           </div>
         </>
       ) : null}
@@ -374,15 +356,15 @@ export function PaperPage({ factors, meta }: { factors: Factor[]; meta: Meta | n
           busy={busy}
         />
       )}
-      {inspect && day && (
+      {inspectDay && (
         <Modal
-          title={`交易计划 · ${day.date}`}
-          subtitle={day.exec_at ? `计划执行时间 ${day.exec_at} · 净值 ${money(day.nav)}` : `净值 ${money(day.nav)}`}
+          title={`当日明细 · ${inspectDay.date}`}
+          subtitle={inspectDay.exec_at ? `计划成交 ${inspectDay.exec_at} · 净值 ${money(inspectDay.nav)}` : `净值 ${money(inspectDay.nav)}`}
           width={860}
-          onClose={() => setInspect(false)}
+          onClose={() => setInspectKey('')}
           closeOnEscape={!kline}
         >
-          <PaperDayDetail day={day} onOpen={setKline} />
+          <PaperDayDetail day={inspectDay} onOpen={setKline} />
         </Modal>
       )}
       {kline && <KLineModal target={kline} onClose={() => setKline(null)} />}
@@ -484,57 +466,27 @@ type DayView = {
   ret: number
 }
 
-function dayFromPlan(p: Paper, plan: PaperPlan): DayView {
-  const execDay = (plan.exec_at || '').slice(0, 10)
-  const snap = (p.snapshots ?? []).find((s) => s.date === execDay)
-  const fills = (p.fills ?? []).filter((f) => f.plan_id === plan.id)
-  const pending = plan.status === 'pending'
-  const intents = plan.intents ?? []
+function dayFromSnapshot(p: Paper, date: string): DayView | null {
+  if (!date) return null
+  const snap = (p.snapshots ?? []).find((s) => s.date === date)
+  const plan = (p.plans ?? []).find((x) => x.signal_date === date)
+  if (!snap && !plan) return null
   return {
-    pending,
-    date: plan.signal_date,
-    exec_at: plan.exec_at,
-    picks: plan.picks ?? [],
-    intents,
-    holdings: pending ? p.book.positions ?? [] : snap?.holdings ?? [],
-    trades: fills,
-    nav: snap?.nav ?? p.book.cash,
-    cash: snap?.cash ?? p.book.cash,
+    pending: plan?.status === 'pending',
+    date,
+    exec_at: plan?.exec_at || '',
+    picks: plan?.picks ?? [],
+    intents: plan?.intents ?? [],
+    holdings: snap?.holdings ?? [],
+    trades: (p.fills ?? []).filter((f) => ymd(f.date) === date),
+    nav: snap?.nav ?? 0,
+    cash: snap?.cash ?? 0,
     ret: snap?.ret ?? 0,
   }
 }
 
-function intentFillSide(side: string): 'buy' | 'sell' | null {
-  if (side === 'open' || side === 'add' || side === 'buy') return 'buy'
-  if (side === 'exit' || side === 'reduce' || side === 'sell') return 'sell'
-  return null
-}
-
-function plannedTrades(day: DayView): PaperFill[] {
-  const out: PaperFill[] = []
-  for (const it of day.intents) {
-    const fillSide = intentFillSide(it.side)
-    if (!fillSide || !(it.shares > 0)) continue
-    out.push({
-      account_id: 0,
-      date: day.exec_at,
-      code: it.code,
-      name: it.name,
-      label: it.label,
-      side: fillSide,
-      shares: it.shares,
-      price: 0,
-      amount: 0,
-      fee: 0,
-      status: 'pending',
-    })
-  }
-  return out
-}
-
 function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarget) => void }) {
   const [tab, setTab] = useState<DayTab>('plan')
-  const trades = day.pending ? plannedTrades(day) : day.trades ?? []
   return (
     <>
       <div className="tabs-bar">
@@ -553,7 +505,7 @@ function PaperDayDetail({ day, onOpen }: { day: DayView; onOpen: (row: KLineTarg
       </div>
       {tab === 'plan' && <PlanTable rows={day.intents} onOpen={onOpen} />}
       {tab === 'picks' && <PickTable rows={day.picks} onOpen={onOpen} />}
-      {tab === 'trades' && <TradeTable rows={trades} pending={!!day.pending} onOpen={onOpen} />}
+      {tab === 'trades' && <TradeTable rows={day.trades ?? []} pending={!!day.pending} onOpen={onOpen} />}
       {tab === 'holdings' && <HoldingTable rows={day.holdings ?? []} onOpen={onOpen} />}
     </>
   )
@@ -565,11 +517,11 @@ function PlanTable({ rows, onOpen }: { rows: PaperIntent[]; onOpen: (row: KLineT
       <table className="tbl">
         <thead>
           <tr>
+            <th className="num">名次</th>
             <th>股票</th>
             <th>方向</th>
             <th className="num">计划股数</th>
             <th className="num">实际股数</th>
-            <th className="num">名次</th>
             <th className="num">得分</th>
           </tr>
         </thead>
@@ -583,13 +535,13 @@ function PlanTable({ rows, onOpen }: { rows: PaperIntent[]; onOpen: (row: KLineT
           )}
           {rows.map((r) => (
             <tr key={r.code}>
+              <td className="num">{r.rank || '—'}</td>
               <td className="name">
                 <StockName row={r} onOpen={onOpen} />
               </td>
               <td>{STATUS[r.side] ?? r.side}</td>
               <td className="num">{lots(r.shares)}</td>
               <td className="num">{lots(r.actual_shares)}</td>
-              <td className="num">{r.rank || '—'}</td>
               <td className="num">{fmt(r.score, 4)}</td>
             </tr>
           ))}
@@ -602,7 +554,7 @@ function PlanTable({ rows, onOpen }: { rows: PaperIntent[]; onOpen: (row: KLineT
 function PickTable({ rows, onOpen }: { rows: PaperPick[]; onOpen: (row: KLineTarget) => void }) {
   return (
     <div className="tbl-wrap">
-      <table className="tbl">
+      <table className="tbl even-3">
         <thead>
           <tr>
             <th className="num">名次</th>

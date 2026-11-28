@@ -6,6 +6,7 @@ export interface Universe {
 
 /** 与后端 internal/data/universe.go 对齐；meta 未返回时作下拉兜底。 */
 export const FALLBACK_UNIVERSES: Universe[] = [
+  { code: 'ALL', name: '全市场', group: '沪深核心' },
   { code: '000300.SH', name: '沪深300', group: '沪深核心' },
   { code: '000905.SH', name: '中证500', group: '沪深核心' },
   { code: '000906.SH', name: '中证800', group: '沪深核心' },

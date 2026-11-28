@@ -3,6 +3,36 @@ import * as echarts from 'echarts'
 import { cssVar } from '../lib/theme'
 import { ymdFromAxis } from '../lib/ymd'
 
+function axisTime(x: unknown): number {
+  if (typeof x === 'number' && Number.isFinite(x)) return x
+  if (typeof x === 'string') {
+    const t = Date.parse(x)
+    return Number.isFinite(t) ? t : NaN
+  }
+  return NaN
+}
+
+function nearestSeriesX(inst: echarts.ECharts, raw: unknown): unknown {
+  const t = axisTime(raw)
+  if (!Number.isFinite(t)) return raw
+  const opt = inst.getOption() as { series?: Array<{ data?: unknown[] }> }
+  const rows = opt.series?.[0]?.data
+  if (!Array.isArray(rows) || rows.length === 0) return raw
+  let best: unknown = raw
+  let bestDiff = Infinity
+  for (const row of rows) {
+    const x = Array.isArray(row) ? row[0] : null
+    const xt = axisTime(x)
+    if (!Number.isFinite(xt)) continue
+    const diff = Math.abs(xt - t)
+    if (diff < bestDiff) {
+      bestDiff = diff
+      best = x
+    }
+  }
+  return best
+}
+
 function paint(inst: echarts.ECharts, option: echarts.EChartsOption) {
   const ink = cssVar('--ink', '#f5f5f5')
   const sub = cssVar('--sub', '#a3a3a3')
@@ -63,7 +93,7 @@ export function useChart(option: echarts.EChartsOption | null, onAxisClick?: (da
         if (!inst.containPixel('grid', point)) return
         const data = inst.convertFromPixel({ seriesIndex: 0 }, point)
         if (!Array.isArray(data) || data.length < 1) return
-        const day = ymdFromAxis(data[0])
+        const day = ymdFromAxis(nearestSeriesX(inst, data[0]) ?? data[0])
         if (day) clickRef.current(day)
       }
       inst.getZr().on('click', zrClick)

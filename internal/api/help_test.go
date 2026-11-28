@@ -59,7 +59,7 @@ func TestBuildHelpDocReflectsRuntimeCapabilities(t *testing.T) {
 
 func TestDailyBasicFieldsHaveDocs(t *testing.T) {
 	for _, name := range data.DailyBasicCols {
-		item, ok := fieldDocs[name]
+		item, ok := data.FieldInfo(name)
 		if !ok || item.Description == "" || item.Unit == "" || item.Tip == "" {
 			t.Errorf("%s 缺少帮助文档（description/unit/tip）", name)
 		}

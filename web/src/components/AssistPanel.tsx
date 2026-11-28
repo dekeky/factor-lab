@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { AssistStreamEvent, ComboProposal } from '../types'
 import { displayLLM } from './Layout'
 import { AiIcon } from './AiIcon'
+import { ChatMarkdown } from './ChatMarkdown'
 
 interface Msg {
   role: 'user' | 'assistant'
@@ -347,7 +348,9 @@ export function AssistPanel({
             ) : (
               <div className="ac-bot">
                 <div className="ac-bot-head"><span className="ac-logo sm"><AiIcon /></span> AI</div>
-                <div className={`ac-bubble bot${m.streaming ? ' streaming' : ''}`}>{m.content}</div>
+                <div className={`ac-bubble bot${m.streaming ? ' streaming' : ''}`}>
+                  <ChatMarkdown source={m.content} streaming={m.streaming} />
+                </div>
                 {m.combo && (
                   <div className="ac-code-card">
                     <div className="ac-code-head">

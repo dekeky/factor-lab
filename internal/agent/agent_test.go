@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
+
 	"factor-lab/internal/data"
 )
 
@@ -247,5 +250,88 @@ func TestRunComboAssistRetryUnknownID(t *testing.T) {
 	}
 	if res.Attempts < 2 {
 		t.Fatalf("应至少重试一次, attempts=%d", res.Attempts)
+	}
+}
+
+type scriptedLLM struct {
+	replies []*schema.Message
+	i       int
+}
+
+func (s *scriptedLLM) Name() string { return "scripted" }
+
+func (s *scriptedLLM) Chat(ctx context.Context, system, user string) (string, error) {
+	msg, err := s.Generate(ctx, nil)
+	if err != nil || msg == nil {
+		return "", err
+	}
+	return msg.Content, nil
+}
+
+func (s *scriptedLLM) ChatModel() model.BaseChatModel { return s }
+
+func (s *scriptedLLM) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	if len(s.replies) == 0 {
+		return schema.AssistantMessage("", nil), nil
+	}
+	if s.i >= len(s.replies) {
+		return s.replies[len(s.replies)-1], nil
+	}
+	m := s.replies[s.i]
+	s.i++
+	return m, nil
+}
+
+func (s *scriptedLLM) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	msg, err := s.Generate(ctx, input, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{msg}), nil
+}
+
+func TestRunAssistChatModelAgent(t *testing.T) {
+	src := &data.SyntheticSource{Days: 80, Stocks: 20, Seed: 3}
+	p, err := src.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	llm := &scriptedLLM{replies: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call_ops", Type: "function",
+			Function: schema.FunctionCall{Name: toolListOps, Arguments: "{}"},
+		}}),
+		schema.AssistantMessage(`{"reply":"低波动因子：取 20 日日收益率标准差的负排名。","expr":"vol20 = ts_std_dev(pct_chg, 20)\nalpha = -1 * cs_rank(vol20)"}`, nil),
+	}}
+	res, err := RunAssist(context.Background(), llm, []AssistMsg{
+		{Role: "user", Content: "写一个低波因子"},
+	}, "", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Valid || res.Expr == "" {
+		t.Fatalf("ChatModelAgent 应产出有效表达式: %+v", res)
+	}
+	if llm.i < 2 {
+		t.Fatalf("应先调工具再给出表达式, generate 次数=%d", llm.i)
+	}
+}
+
+func TestRunComboAssistChatModelAgent(t *testing.T) {
+	llm := &scriptedLLM{replies: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call_factors", Type: "function",
+			Function: schema.FunctionCall{Name: toolListFactors, Arguments: "{}"},
+		}}),
+		schema.AssistantMessage(`{"reply":"选了低相关的反转与低波。","combo":{"name":"反转+低波","method":"equal","items":[{"id":1,"weight":1,"direction":1},{"id":2,"weight":1,"direction":-1}]}}`, nil),
+	}}
+	res, err := RunComboAssist(context.Background(), llm, []AssistMsg{
+		{Role: "user", Content: "帮我挑几个互补因子做组合"},
+	}, "", testFactorRefs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Valid || res.Combo == nil || len(res.Combo.Items) != 2 {
+		t.Fatalf("ChatModelAgent 组合应通过校验: %+v", res)
 	}
 }

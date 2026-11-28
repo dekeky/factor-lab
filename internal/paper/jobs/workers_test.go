@@ -153,6 +153,36 @@ func TestGenerateIncompleteSnoozes(t *testing.T) {
 	}
 }
 
+func TestGenerateLastBarUsesCalendar(t *testing.T) {
+	env := newEnv(t, testPanel(t, 1, 2))
+	env.deps.OpenDates = func() []string {
+		return []string{"2024-01-01", "2024-01-02"}
+	}
+	acc := mustOpen(t, env, "2024-01-01")
+	if err := env.gen.Work(context.Background(), &river.Job[GenerateArgs]{
+		Args: GenerateArgs{AccountID: acc.ID, SignalDate: "2024-01-01"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := env.st.ListPlans(acc.ID)
+	if err != nil || len(plans) != 1 {
+		t.Fatalf("plans %v %v", plans, err)
+	}
+	if plans[0].ExecAt != "2024-01-02 09:30:00" {
+		t.Fatalf("exec_at %s", plans[0].ExecAt)
+	}
+}
+
+func TestNextSessionSkipsCalendarGap(t *testing.T) {
+	deps := &Deps{OpenDates: func() []string {
+		return []string{"2026-11-27", "2026-11-30"}
+	}}
+	got, ok := nextSession(deps, nil, "2026-11-27")
+	if !ok || got != "2026-11-30" {
+		t.Fatalf("got %s %v", got, ok)
+	}
+}
+
 func TestGenerateCSVDiscard(t *testing.T) {
 	env := newEnv(t, testPanel(t, 1, 2))
 	env.deps.Reload = nil

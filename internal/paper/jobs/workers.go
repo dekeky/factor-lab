@@ -38,6 +38,8 @@ type Deps struct {
 	Client *river.Client[*sql.Tx]
 	Panel  func() *panel.Panel
 	Reload func(context.Context) (*panel.Panel, error)
+	// OpenDates 已公布的开市日（YYYY-MM-DD）。空则退回面板日期轴（测试 / CSV）。
+	OpenDates func() []string
 }
 
 type GenerateWorker struct {
@@ -171,7 +173,7 @@ func (w *GenerateWorker) Work(ctx context.Context, job *river.Job[GenerateArgs])
 	if err != nil {
 		return err
 	}
-	nextDay, ok := nextSession(p, args.SignalDate)
+	nextDay, ok := nextSession(w.Deps, p, args.SignalDate)
 	if !ok {
 		return river.JobSnooze(snoozeIncomplete)
 	}
@@ -222,7 +224,7 @@ func (w *GenerateWorker) Work(ctx context.Context, job *river.Job[GenerateArgs])
 
 func (w *GenerateWorker) loadForGenerate(ctx context.Context, expr, signalDate string) (*panel.Panel, error) {
 	p := currentPanel(w.Deps)
-	if generateReady(p, expr, signalDate) {
+	if generateReady(w.Deps, p, expr, signalDate) {
 		return p, nil
 	}
 	if w.Deps.Reload == nil {
@@ -232,7 +234,7 @@ func (w *GenerateWorker) loadForGenerate(ctx context.Context, expr, signalDate s
 	if err != nil {
 		return nil, river.JobSnooze(snoozeIncomplete)
 	}
-	if !generateReady(np, expr, signalDate) {
+	if !generateReady(w.Deps, np, expr, signalDate) {
 		return nil, river.JobSnooze(snoozeIncomplete)
 	}
 	return np, nil
@@ -411,14 +413,22 @@ func parseExecAt(execAt string) (time.Time, error) {
 	return t, nil
 }
 
-func nextSession(p *panel.Panel, ymd string) (string, bool) {
-	if p == nil {
-		return "", false
+func sessionDates(deps *Deps, p *panel.Panel) []string {
+	if deps != nil && deps.OpenDates != nil {
+		if d := deps.OpenDates(); len(d) > 0 {
+			return d
+		}
 	}
-	labels := p.DateLabels()
-	for i, d := range labels {
-		if d == ymd && i+1 < len(labels) {
-			return labels[i+1], true
+	if p == nil {
+		return nil
+	}
+	return p.DateLabels()
+}
+
+func nextSession(deps *Deps, p *panel.Panel, ymd string) (string, bool) {
+	for _, d := range sessionDates(deps, p) {
+		if d > ymd {
+			return d, true
 		}
 	}
 	return "", false
@@ -463,14 +473,14 @@ func panelDate(p *panel.Panel, ymd string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func generateReady(p *panel.Panel, expr, signalDate string) bool {
+func generateReady(deps *Deps, p *panel.Panel, expr, signalDate string) bool {
 	if p == nil || p.N() == 0 || p.T() == 0 || !hasClose(p) {
 		return false
 	}
 	if !dateOnAxis(p, signalDate) {
 		return false
 	}
-	if _, ok := nextSession(p, signalDate); !ok {
+	if _, ok := nextSession(deps, p, signalDate); !ok {
 		return false
 	}
 	_, errs := engine.Run(expr, p)

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudwego/eino/schema"
+
 	"factor-lab/internal/data"
 )
 
@@ -98,4 +100,44 @@ func (c *chunkLLM) Stream(ctx context.Context, system, user string, emit func(st
 		}
 	}
 	return b.String(), nil
+}
+
+func TestRunAssistStreamChatModelAgent(t *testing.T) {
+	src := &data.SyntheticSource{Days: 80, Stocks: 20, Seed: 3}
+	p, err := src.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	llm := &scriptedLLM{replies: []*schema.Message{
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "call_fields", Type: "function",
+			Function: schema.FunctionCall{Name: toolListFields, Arguments: "{}"},
+		}}),
+		schema.AssistantMessage(`{"reply":"低波动因子。","expr":"vol20 = ts_std_dev(pct_chg, 20)\nalpha = -1 * cs_rank(vol20)"}`, nil),
+	}}
+	var text strings.Builder
+	var sawDone bool
+	res, err := RunAssistStream(context.Background(), llm, []AssistMsg{
+		{Role: "user", Content: "写一个低波因子"},
+	}, "", p, func(ev AssistEvent) error {
+		switch ev.Type {
+		case AssistEventDelta:
+			text.WriteString(ev.Text)
+		case AssistEventDone:
+			sawDone = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Valid || res.Expr == "" {
+		t.Fatalf("expected valid expr, got %+v", res)
+	}
+	if text.String() != "低波动因子。" {
+		t.Fatalf("streamed reply %q", text.String())
+	}
+	if !sawDone {
+		t.Fatal("missing done event")
+	}
 }

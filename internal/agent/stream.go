@@ -48,12 +48,12 @@ func runAssist(ctx context.Context, llm LLM, msgs []AssistMsg, currentExpr strin
 		emit = func(AssistEvent) error { return nil }
 	}
 	combo := mode == AssistModeCombo
-	user := buildAssistUser(msgs, currentExpr)
+	_, useAgent := llm.(ChatModeler)
 	var sys string
 	if combo {
-		sys = comboSystemPrompt(factors)
+		sys = comboSystemPrompt(factors, !useAgent)
 	} else {
-		sys = assistSystemPrompt(p)
+		sys = assistSystemPrompt(p, !useAgent)
 	}
 	res := &AssistResult{}
 	feedback := ""
@@ -71,14 +71,13 @@ func runAssist(ctx context.Context, llm LLM, msgs []AssistMsg, currentExpr strin
 				return res, err
 			}
 		}
-		prompt := user + "\n\n上次尝试的反馈：\n" + feedback
 		ex := newReplyExtractor()
-		raw, err := completeLLM(ctx, llm, sys, prompt, stream, func(chunk string) error {
+		raw, err := completeAssist(ctx, llm, sys, msgs, currentExpr, feedback, stream, func(chunk string) error {
 			if d := ex.Feed(chunk); d != "" {
 				return emit(AssistEvent{Type: AssistEventDelta, Text: d})
 			}
 			return nil
-		})
+		}, mode, p, factors)
 		if err != nil {
 			return res, fmt.Errorf("LLM 调用失败: %w", err)
 		}
@@ -164,6 +163,16 @@ func buildAssistUser(msgs []AssistMsg, currentExpr string) string {
 	}
 	user += "\n\n请按系统约定的 JSON 格式回复。"
 	return user
+}
+
+func completeAssist(ctx context.Context, llm LLM, sys string, msgs []AssistMsg, current, feedback string, stream bool, onChunk func(string) error, mode string, p *panel.Panel, factors []FactorRef) (string, error) {
+	if cm, ok := llm.(ChatModeler); ok {
+		if model := cm.ChatModel(); model != nil {
+			return runChatModelAssist(ctx, model, sys, msgs, current, feedback, stream, onChunk, mode, p, factors)
+		}
+	}
+	user := buildAssistUser(msgs, current) + "\n\n上次尝试的反馈：\n" + feedback
+	return completeLLM(ctx, llm, sys, user, stream, onChunk)
 }
 
 func completeLLM(ctx context.Context, llm LLM, sys, user string, stream bool, onChunk func(string) error) (string, error) {

@@ -1,13 +1,24 @@
-factor-lab.exe
-factor-lab
-data/
-dist/
-node_modules/
-*.log
-# 运行时产物
+# 构建产物（含 go build / go run 留下的二进制）
+*.exe
+/factor-lab
+/factor-lab-next
+/factor-lab-verify
+
+# 运行时数据（仅仓库根目录。写成 data/ 会把 internal/data 源码一并忽略）
+/data/
+shots/
 be.json
 ev.json
 fs.json
-data/*.seeded
-data/*.bak
-shots/
+*.log
+*.bak
+
+# 前端构建
+/web/dist/
+node_modules/
+
+# 本地环境与工具缓存
+.venv/
+.workbuddy/
+.env
+.env.*
